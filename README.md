@@ -61,9 +61,8 @@ possible liquefaction, a possible fire, shaking only, nothing). It writes `runs/
 
 ![Map of the demo event](docs/demo/map.png)
 
-The interactive [`docs/demo/map.html`](docs/demo/map.html) (basemap, popups with each camera's findings and
-tile) does not render on github.com, which shows its source: download the `docs/demo/` folder and open
-`map.html` in a browser. The findings are not from a model; to test a model, see [Testing with
+The interactive map, with a basemap and popups with each camera's findings and tile:
+**<https://lijun99.github.io/eqcam/demo/map.html>** (served by GitHub Pages from `docs/`). The findings are not from a model; to test a model, see [Testing with
 the Claude Code skill](#testing-with-the-claude-code-skill), or run `eqcam review` on the demo with a backend.
 
 ## Inputs
