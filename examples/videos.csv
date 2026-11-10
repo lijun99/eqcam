@@ -1,0 +1,4 @@
+camera_id,name,lat,lon,video,start_utc,view
+caltrans_d7_101,Caltrans D7 US-101 at example interchange (made-up example),34.1000,-118.3300,d7_101.mp4,2026-01-01T12:00:00Z,freeway overpass and on-ramps
+ridge_cam_01,Ridge-top fire camera (made-up example),34.2200,-118.1500,ridge01.mp4,,hillside and canyon to the north
+beach_cam_02,Beach and pier live stream (made-up example),33.9900,-118.4800,pier02.mp4,2026-01-01T11:58:30Z,pier and beach

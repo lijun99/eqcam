@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# videos and outputs of runs
+*.mp4
+*.mov
+*.mkv
+runs/
+data/

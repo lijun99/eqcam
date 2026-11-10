@@ -1,0 +1,2 @@
+{"event_id": "example", "place": "a made-up example event", "origin_utc": "2026-01-01T12:01:00Z",
+ "lat": 34.05, "lon": -118.25, "depth_km": 10, "magnitude": 6.8}

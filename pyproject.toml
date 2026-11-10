@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eqcam"
+version = "0.1.0"
+description = "Rapid survey of camera videos after an earthquake with vision-language models"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "matplotlib", "pillow"]
+
+[project.optional-dependencies]
+claude = ["anthropic[vertex]"]
+gemini = ["google-genai"]
+test = ["pytest"]
+
+[project.scripts]
+eqcam = "eqcam.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
