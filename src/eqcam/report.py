@@ -15,6 +15,7 @@ from .schema import DETECTIONS, SEVERITY_NAMES
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt                     # noqa: E402
+from matplotlib.ticker import MaxNLocator           # noqa: E402
 
 COLORS = {0: '#8a8f98', 1: '#e3b505', 2: '#f08a24', 3: '#d62728', None: '#4a6fa5'}
 NAMES = {**SEVERITY_NAMES, None: 'not reviewed'}
@@ -104,8 +105,18 @@ def map_html(rows, event, out):
 const points = {json.dumps(points)};
 const epi = {json.dumps(epi)};
 const map = L.map('map');
-L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
-            {{maxZoom: 18, attribution: '&copy; OpenStreetMap contributors'}}).addTo(map);
+// basemaps that serve a page opened as a local file (OpenStreetMap's own tile servers block it):
+// The National Map (USGS, public domain, United States only) and CARTO (worldwide, OpenStreetMap data)
+const usgs = 'https://basemap.nationalmap.gov/arcgis/rest/services/';
+const nationalMap = 'Basemap: <a href="https://www.usgs.gov/programs/national-geospatial-program/national-map">USGS The National Map</a>';
+const bases = {{
+  'USGS Topo': L.tileLayer(usgs + 'USGSTopo/MapServer/tile/{{z}}/{{y}}/{{x}}', {{maxZoom: 16, attribution: nationalMap}}),
+  'USGS Imagery': L.tileLayer(usgs + 'USGSImageryTopo/MapServer/tile/{{z}}/{{y}}/{{x}}', {{maxZoom: 16, attribution: nationalMap}}),
+  'CARTO Light (worldwide)': L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png',
+    {{maxZoom: 19, subdomains: 'abcd',
+     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'}}),
+}};
+L.control.layers(bases, null, {{position: 'topright'}}).addTo(map);
 const bounds = [];
 for (const p of points) {{
   L.circleMarker([p.lat, p.lon], {{radius: 8, color: '#222', weight: 1, fillColor: p.color, fillOpacity: 0.9}})
@@ -114,6 +125,11 @@ for (const p of points) {{
 }}
 if (epi) {{ L.marker(epi).bindPopup({json.dumps(title)}).addTo(map); bounds.push(epi); }}
 if (bounds.length > 1) map.fitBounds(bounds, {{padding: [40, 40]}}); else map.setView(bounds[0] || [34, -118], 10);
+// The National Map where it has coverage (the conterminous US, Alaska, Hawaii, Puerto Rico), CARTO elsewhere
+const c = map.getCenter();
+const inUS = (c.lat > 24 && c.lat < 50 && c.lng > -125 && c.lng < -66) || (c.lat > 51 && c.lat < 72 && c.lng < -129)
+  || (c.lat > 18 && c.lat < 23 && c.lng > -161 && c.lng < -154) || (c.lat > 17.5 && c.lat < 18.6 && c.lng > -68 && c.lng < -65);
+bases[inUS ? 'USGS Topo' : 'CARTO Light (worldwide)'].addTo(map);
 const legend = L.control({{position: 'bottomright'}});
 legend.onAdd = () => {{ const d = L.DomUtil.create('div', 'legend'); d.innerHTML = {json.dumps(legend)}; return d; }};
 legend.addTo(map);
@@ -127,18 +143,24 @@ def map_png(rows, event, out):
     fig, ax = plt.subplots(figsize=(8, 6.5), constrained_layout=True)
     pts = [r for r in rows if r.get('lat') is not None]
     lats = [r['lat'] for r in pts] + ([event['lat']] if event.get('lat') is not None else [])
+    lons = [r['lon'] for r in pts] + ([event['lon']] if event.get('lon') is not None else [])
+    mid = (min(lons) + max(lons)) / 2 if lons else 0
     for r in sorted(pts, key=lambda r: -1 if r['severity'] is None else r['severity']):
         ax.scatter(r['lon'], r['lat'], s=70, c=COLORS.get(r['severity'], COLORS[None]), edgecolors='#222',
                    linewidths=0.6, zorder=3)
-        if (r['severity'] or 0) >= 2:
+        if (r['severity'] or 0) >= 2:                   # labels toward the middle, to stay inside the map
+            east = r['lon'] > mid
             ax.annotate(f"{r['camera_id']}: {', '.join(detected(r['findings']))[:70]}", (r['lon'], r['lat']),
-                        xytext=(6, 4), textcoords='offset points', fontsize=7)
+                        xytext=(-7 if east else 7, 5), textcoords='offset points', ha='right' if east else 'left',
+                        fontsize=7, zorder=4, bbox=dict(boxstyle='round,pad=0.2', fc='white', ec='none', alpha=0.8))
     if event.get('lat') is not None:
-        ax.scatter(event['lon'], event['lat'], marker='*', s=260, c='k', zorder=4)
+        ax.scatter(event['lon'], event['lat'], marker='*', s=260, c='k', zorder=6)
         ax.annotate(f"M{event.get('magnitude', '')}", (event['lon'], event['lat']), xytext=(8, -12),
-                    textcoords='offset points', fontsize=9)
+                    textcoords='offset points', fontsize=9, zorder=6)
     if lats:
-        ax.set_aspect(1 / math.cos(math.radians(float(np.mean(lats)))))
+        ax.set_aspect(1 / math.cos(math.radians(float(np.mean(lats)))), adjustable='datalim')
+    ax.xaxis.set_major_locator(MaxNLocator(5))
+    ax.yaxis.set_major_locator(MaxNLocator(6))
     for k, v in NAMES.items():
         ax.scatter([], [], c=COLORS[k], edgecolors='#222', linewidths=0.6, label=v)
     ax.legend(fontsize=7, loc='best', frameon=True)

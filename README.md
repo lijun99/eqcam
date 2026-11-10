@@ -126,6 +126,10 @@ backend. If `eqcam` is not installed in the environment, the skill runs it from 
   findings}`
 - `survey.csv`, `survey.json`, `map.html`, `map.png`
 
+`map.html` opens from the disk in a browser (it needs internet for the basemap and Leaflet). Its basemaps are
+USGS The National Map (Topo and Imagery; US only; the default for US events) and CARTO Light (worldwide). It does
+not use OpenStreetMap's own tile servers, which block pages opened as local files.
+
 ## Notes
 
 - **Cost and time.** A 1280 x 720 tile is about 1,200 image tokens; with the text, about 2,500 input and
