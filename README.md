@@ -37,6 +37,35 @@ pip install -e ".[gemini]"          # Gemini through Vertex AI
 pip install -e ".[test]" && pytest  # tests need no API
 ```
 
+## Tests and demo
+
+Neither needs an API key, a GPU or real videos.
+
+`pytest` runs the tests in `tests/` (about 5 s). They make synthetic videos with ffmpeg: a textured scene,
+with sensor noise, shaken by a few pixels for 4 s, with a dark patch after the shaking. They check that:
+
+- `prepare` finds the shaking at the right time and with a plausible amplitude, flags the change after it,
+  makes the 2 x 2 tile, and handles a quiet camera, a missing video and a noiseless static scene;
+- the findings schema accepts valid findings and lists every problem of invalid ones, and the JSON is
+  recovered from a model's text (code fences, reasoning blocks);
+- each backend builds the right request: Claude with a stand-in client (structured output, image, server-side
+  fallbacks on the Anthropic API only, refusals), Gemini's schema, and Qwen against a local stand-in for an
+  OpenAI-compatible server;
+- `review` runs in parallel, skips cameras already reviewed, escalates only the flagged ones to a second
+  stage, and `report` writes the table and the maps.
+
+`python examples/demo.py` builds a made-up event to see what eqcam produces: eight cameras around Los Angeles
+with synthetic videos (one without a video) and made-up findings of every severity (a collapse, a landslide,
+possible liquefaction, a possible fire, shaking only, nothing). It writes `runs/demo/run/map.html`,
+`map.png`, `survey.csv` and the tiles. A copy is in [`docs/demo/`](docs/demo/):
+
+![Map of the demo event](docs/demo/map.png)
+
+The interactive [`docs/demo/map.html`](docs/demo/map.html) (basemap, popups with each camera's findings and
+tile) does not render on github.com, which shows its source: download the `docs/demo/` folder and open
+`map.html` in a browser. The findings are not from a model; to test a model, see [Testing with
+the Claude Code skill](#testing-with-the-claude-code-skill), or run `eqcam review` on the demo with a backend.
+
 ## Inputs
 
 `videos.csv` (see `examples/`):
@@ -140,5 +169,6 @@ not use OpenStreetMap's own tile servers, which block pages opened as local file
   must not leave it.
 - **The motion is not a seismometer.** The image motion depends on the camera's mount; it is used to find the
   shaking and pick the frames, and the intensity is estimated only from visible effects.
-- **Status.** The prepare, review and report steps are tested with synthetic videos and stand-ins for the APIs;
-  the backends have not yet been run against the live services.
+- **Status.** The prepare, review and report steps are tested with synthetic videos and stand-ins for the APIs
+  (see [Tests and demo](#tests-and-demo)); the backends have not yet been run against the live services, nor
+  the pipeline on real earthquake videos.
