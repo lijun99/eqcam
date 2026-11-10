@@ -25,7 +25,8 @@ videos.csv + videos + event.json
 ```
 
 `eqcam run` does all three. The Claude Code skill in `.claude/skills/eqcam/` runs the same steps and can also do
-the review in the session itself (no API key), for testing.
+the review in the session itself (no API key), for testing: see [Testing with the Claude Code
+skill](#testing-with-the-claude-code-skill).
 
 ## Install
 
@@ -71,6 +72,51 @@ eqcam review --out runs/E --backend claude --model claude-haiku-5-5 --stage scre
 eqcam review --out runs/E --backend claude --stage final --escalate-from screen
 eqcam report --out runs/E                 # takes final, then review, then screen
 ```
+
+## Testing with the Claude Code skill
+
+The skill lets you try the whole pipeline before you have an API key. Claude, in a Claude Code session, does
+the review step itself: it looks at each camera's tile and writes the findings in the same format as the API
+backends. This uses your Claude plan, not API credits.
+
+1. **Make the skill available.** It loads when Claude Code is started in this repository (`cd eqcam && claude`).
+   To use it from another folder, such as the one with the videos, link it into your user skills:
+
+   ```bash
+   mkdir -p ~/.claude/skills && ln -s "$PWD/.claude/skills/eqcam" ~/.claude/skills/eqcam
+   ```
+
+2. **List the test videos** in a `videos.csv` (format above; `examples/` has one), with an `event.json` if you
+   have the event. Useful test sets: CCTV clips of past earthquakes, and a few minutes of live streams on a quiet
+   day, to see the false alarms.
+
+3. **Run the skill** with `/eqcam` or by asking, for example:
+
+   ```
+   /eqcam survey the videos in ~/quake_clips/videos.csv (event ~/quake_clips/event.json);
+   review them in this session, no API
+   ```
+
+   It runs `eqcam prepare`, reviews each tile in the session (high priority first, split among subagents
+   when there are many cameras), writes `findings/review/<camera_id>.json` with `"reviewed_by": "claude-code"`,
+   checks them with `eqcam validate`, and runs `eqcam report`.
+
+4. **Check the results.** Open `runs/<event_id>/map.html` and compare each camera's findings with its tile
+   (`cameras/<id>/tile.jpg`) and its video.
+
+To compare with an API backend on the same run, review into another stage and report each in turn (the report
+files are rewritten each time):
+
+```bash
+eqcam review --out runs/E --backend claude --stage api
+eqcam report --out runs/E --stages api        # the API's findings
+eqcam report --out runs/E --stages review     # the session's findings
+```
+
+The in-session review is for testing a few to a few tens of cameras: it is slower than the API backends and
+counts against the plan's usage limits. The tiles are sent to Claude as part of the session, as with a cloud
+backend. If `eqcam` is not installed in the environment, the skill runs it from the source
+(`PYTHONPATH=src python -m eqcam.cli`).
 
 ## Outputs (`--out`)
 
