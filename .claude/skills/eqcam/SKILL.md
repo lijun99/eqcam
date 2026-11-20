@@ -67,9 +67,15 @@ high priority first:
 3. Hold to the instructions: compare BEFORE with AFTER and LATEST; report only what is visible; "uncertain"
    rather than a guess; common false alarms (fog, low sun, lens flare, rain on the lens, steam, traffic dust,
    motion blur, a camera that panned); intensity only from visible effects; people only as counts and actions.
+4. Fill `people_boxes`: a box around every person or close group in any of the four frames, in 0-1000 of the
+   whole tile (x from the left, y from the top), close around each person or group (eqcam adds a 10 % margin;
+   do not box whole sidewalks, which blurs the scene); include small, distant and partly hidden people
+   (look at the full frames when the tile is too small to tell); `[]` if there are none. `eqcam report` blurs
+   them in the tile and the frames before anything is published; a missed person stays visible, an extra box
+   only blurs a little more.
 
 With more than about 15 cameras, split them among parallel subagents: give each a list of camera ids, the
-path of the run, and steps 1-3; each writes its own files. Then check them all:
+path of the run, and steps 1-4; each writes its own files. Then check them all:
 
 ```bash
 eqcam validate --out runs/<id> --stage review
@@ -83,9 +89,10 @@ and fix every problem it lists.
 eqcam report --out runs/<id>
 ```
 
-It writes `survey.csv`, `survey.json`, `map.html` (open it in a browser; markers colored by severity, a panel to
-filter the cameras by tag, and in each popup the tile and links to the video online, `video_url`, at the window
-of the detections) and `map.png`. Tell the user:
+It first blurs the people in the tiles and frames from the `people_boxes` of the review (originals kept in
+`cameras/<id>/original/`; `--no-mask` to skip), then writes `survey.csv`, `survey.json`, `map.html` (open it
+in a browser; markers colored by severity, a panel to filter the cameras by tag, and in each popup the tile and
+links to the video online, `video_url`, at the window of the detections) and `map.png`. Tell the user:
 
 - the counts by severity, and every camera of severity 2 or 3: what was detected, where, the confidence, and
   the path of its tile;

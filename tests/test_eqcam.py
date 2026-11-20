@@ -5,6 +5,7 @@ a fake backend"""
 import csv
 import json
 import os
+import shutil
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -15,7 +16,7 @@ import pytest
 from PIL import Image
 from scipy import ndimage
 
-from eqcam import backends, frames, report, review, schema
+from eqcam import backends, frames, mask, report, review, schema
 
 FPS, H, W = 30, 360, 640
 
@@ -26,6 +27,7 @@ def example_findings(severity=2):
               shaking={'visible': 'yes', 'effects': ['poles swaying'], 'intensity_mmi': 'V-VI',
                        'basis': 'poles and wires swaying'})
     fd['smoke_or_dust'] = {'present': 'yes', 'description': 'a plume', 'where': 'upper left, AFTER'}
+    fd['people_boxes'] = [{'x_min': 100, 'y_min': 100, 'x_max': 200, 'y_max': 300}]
     return fd
 
 
@@ -321,3 +323,40 @@ def test_motion_items():
     assert 'Scene changed: 4 % of the image' in items and 'Dark at the end (possible outage)' in items
     assert frames.motion_items(dict(flags=['no_video'])) == ['No video']
     assert frames.motion_items(dict(flags=[], shaking_detected=False)) == ['No shaking detected']
+
+
+def test_mask_people(prepared, tmp_path):
+    """The boxes of the review blurred in the tile and the mapped part of the frame; the originals kept, and
+    restored when the boxes are gone"""
+    out = str(tmp_path / 'run')
+    shutil.copytree(prepared, out)
+    shutil.rmtree(os.path.join(out, 'findings'), ignore_errors=True)                 # other tests reviewed it
+    orig = os.path.join(out, 'cameras', 'cam1', 'original')
+    if os.path.isdir(orig):                                                         # and masked it
+        for name in os.listdir(orig):
+            shutil.copy2(os.path.join(orig, name), os.path.join(out, 'cameras', 'cam1', name))
+        shutil.rmtree(orig)
+    m = metrics_of(out)['cam1']
+    assert set(m['tile_layout']) == set(m['frames'])
+    tile_path, before_path = os.path.join(out, m['tile']), os.path.join(out, m['frames']['before']['file'])
+    tile0, before0 = (np.asarray(Image.open(p).convert('L'), float) for p in (tile_path, before_path))
+    rec = dict(camera_id='cam1', stage='review', findings=dict(example_findings(), people_boxes=[
+        {'x_min': 100, 'y_min': 100, 'x_max': 300, 'y_max': 400}]))      # in the BEFORE frame (upper left)
+    os.makedirs(os.path.join(out, 'findings', 'review'))
+    with open(os.path.join(out, 'findings', 'review', 'cam1.json'), 'w') as f:
+        json.dump(rec, f)
+    assert mask.mask_run(out)['cam1'] == 1
+    tile1, before1 = (np.asarray(Image.open(p).convert('L'), float) for p in (tile_path, before_path))
+    inside = (slice(int(0.45 * 720 * 0.4), int(0.35 * 720)), slice(140, 380))         # within the box, in the tile
+    assert np.abs(tile1 - tile0)[inside].mean() > 5                                   # blurred
+    assert np.abs(tile1 - tile0)[400:, 700:].mean() < 1                               # LATEST, untouched
+    x0, y0, w, h = m['tile_layout']['before']
+    fy, fx = before0.shape[0] / h, before0.shape[1] / w
+    box = (slice(int((144 - y0) * fy), int((216 - y0) * fy)), slice(int((160 - x0) * fx), int((320 - x0) * fx)))
+    assert np.abs(before1 - before0)[box].mean() > 5 and np.abs(before1 - before0)[-50:, -50:].mean() < 1
+    assert os.path.exists(os.path.join(out, 'cameras', 'cam1', 'original', 'tile.jpg'))
+    rec['findings']['people_boxes'] = []                                              # a new review: no people
+    with open(os.path.join(out, 'findings', 'review', 'cam1.json'), 'w') as f:
+        json.dump(rec, f)
+    mask.mask_run(out)
+    assert np.abs(np.asarray(Image.open(tile_path).convert('L'), float) - tile0).mean() < 1

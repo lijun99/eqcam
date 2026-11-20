@@ -11,6 +11,7 @@ import matplotlib
 import numpy as np
 
 from .frames import motion_items
+from .mask import mask_run
 from .review import load_record
 from .schema import DETECTIONS, SEVERITY_NAMES
 
@@ -69,7 +70,7 @@ def write_table(rows, event, out):
               'strong_duration_s', 'shake_amplitude_px', 'peak_image_velocity_px_s', 'permanent_shift_px',
               'changed_fraction_after', 'changed_fraction_latest', 'reviewed_by', 'model', 'review_error',
               'severity', 'confidence', 'camera_status', 'shaking_visible', 'intensity_mmi', *DETECTIONS, 'summary',
-              'motion_brief',
+              'motion_brief', 'people_blurred',
               'video_start_s', 'video_end_s', 'video_window', 'video_url']
     with open(os.path.join(out, 'survey.csv'), 'w', newline='') as f:
         w = csv.writer(f)
@@ -303,10 +304,15 @@ def map_png(rows, event, out):
     plt.close(fig)
 
 
-def report(out, stages=('final', 'review', 'screen')):
+def report(out, stages=('final', 'review', 'screen'), mask=True):
+    """The table and the maps; first, unless mask is False, the people blurred in the tiles and frames from the
+    boxes of the review (eqcam.mask)"""
     with open(os.path.join(out, 'event.json')) as f:
         event = json.load(f)
+    blurred = mask_run(out, stages) if mask else {}
     rows = merge(out, stages)
+    for r in rows:
+        r['people_blurred'] = blurred.get(r['camera_id'])
     write_table(rows, event, out)
     map_html(rows, event, out)
     map_png(rows, event, out)

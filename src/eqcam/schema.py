@@ -26,10 +26,14 @@ DETECTIONS = {
     'people_response': 'people running, evacuating or gathering (counts and actions only, never who they are)',
 }
 
+# a box in the coordinates of the whole image sent for review, 0-1000 (x to the right, y down)
+BOX = {'type': 'object', 'additionalProperties': False, 'required': ['x_min', 'y_min', 'x_max', 'y_max'],
+       'properties': {k: {'type': 'integer'} for k in ('x_min', 'y_min', 'x_max', 'y_max')}}
+
 FINDINGS_SCHEMA = {
     'type': 'object',
     'additionalProperties': False,
-    'required': ['camera_status', 'shaking', *DETECTIONS, 'severity', 'confidence', 'summary'],
+    'required': ['camera_status', 'shaking', *DETECTIONS, 'severity', 'confidence', 'summary', 'people_boxes'],
     'properties': {
         'camera_status': {'type': 'string', 'enum': ['ok', 'dark', 'frozen', 'moved', 'obstructed', 'unusable'],
                           'description': 'the state of the camera and its view after the shaking'},
@@ -50,6 +54,9 @@ FINDINGS_SCHEMA = {
                                     'failure (uncertain or minor); 3 clear damage, fire or ground failure'},
         'confidence': {'type': 'string', 'enum': ['low', 'medium', 'high']},
         'summary': {'type': 'string', 'description': 'one sentence for the map'},
+        'people_boxes': {'type': 'array', 'items': BOX,
+                         'description': 'a box around every person or group of people in any frame, to blur them '
+                                        'for privacy; 0-1000 of the whole image; empty if none'},
     },
 }
 
@@ -76,7 +83,10 @@ hanging objects or trees swaying, people running out, objects falling, damage), 
 image alone, which depends on how the camera is mounted.
 
 People: describe only counts and actions (running, gathering, evacuating). Never describe or try to \
-identify individuals.
+identify individuals. For privacy, also return people_boxes: a box around every person visible in any of the \
+frames (a group close together can share one box), in coordinates 0-1000 of the whole image you get (x from \
+the left, y from the top), close around each person or group (a margin is added); they are only used to blur \
+the people before the frames are published. Include small and partly hidden people; leave the list empty if there are none.
 
 Severity: 0 nothing notable; 1 shaking effects only; 2 possible damage, fire or ground failure (uncertain or \
 minor); 3 clear damage, fire or ground failure."""

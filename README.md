@@ -151,11 +151,18 @@ backend. If `eqcam` is not installed in the environment, the skill runs it from 
 
 ## Outputs (`--out`)
 
-- `cameras/<id>/`: `tile.jpg`, the full frames, `motion.png`, `motion.npz`
+- `cameras/<id>/`: `tile.jpg`, the full frames, `motion.png`, `motion.npz`; after `eqcam report`, the tile and
+  frames with the people blurred and the originals in `original/`
 - `metrics.json`, `tasks.json`: the motion and flags per camera, and the review tasks (high priority first)
 - `findings/<stage>/<id>.json`: `{camera_id, stage, reviewed_by, model, reviewed_at, latency_s, usage, error,
   findings}`, and optionally `video_window_s: [start, end]` (s of the video) set by the reviewer
 - `survey.csv`, `survey.json`, `map.html`, `map.png`
+
+**People are blurred** before the frames are published or shared: the review returns `people_boxes` (a box around
+every person or group, 0-1000 of the tile) with its findings, at no extra cost, and `eqcam report` pixelates and
+blurs those boxes in the tile and, through the tile layout saved by prepare, in the full frames (Pillow only;
+`--no-mask` to skip). The originals stay in `cameras/<id>/original/`. The boxes are as good as the model's
+localization: they are padded, and a review that misses a person leaves them visible.
 
 `map.html` opens from the disk in a browser (it needs internet for the basemap and Leaflet). Its basemaps are
 USGS The National Map (Topo and Imagery; US only; the default for US events) and CARTO Light (worldwide). It does

@@ -16,6 +16,7 @@ import datetime as dt
 import json
 import math
 import os
+import shutil
 import subprocess
 
 import matplotlib
@@ -297,8 +298,9 @@ def changed_fraction(a, b, shift, level=25.0):
 
 # --------------------------------------------------------------------------------------- the products
 
-def tile(paths, labels, out, size=(640, 360)):
-    """A 2 x 2 tile of up to four frames, each fitted into size and labeled"""
+def tile(paths, labels, out, size=(640, 360), placements=None):
+    """A 2 x 2 tile of up to four frames, each fitted into size and labeled; placements (a list), if given,
+    receives where each frame is in the tile, [x0, y0, width, height] (None for a missing frame)"""
     canvas = Image.new('RGB', (2 * size[0], 2 * size[1]), 'black')
     try:
         font = ImageFont.truetype('DejaVuSans-Bold.ttf', 20)
@@ -306,6 +308,8 @@ def tile(paths, labels, out, size=(640, 360)):
         font = ImageFont.load_default()
     draw = ImageDraw.Draw(canvas)
     for k, (path, label) in enumerate(zip(paths, labels)):
+        if placements is not None:
+            placements.append(None)
         if not path:
             continue
         with Image.open(path) as im:
@@ -314,6 +318,8 @@ def tile(paths, labels, out, size=(640, 360)):
             x0 = (k % 2) * size[0] + (size[0] - im.width) // 2
             y0 = (k // 2) * size[1] + (size[1] - im.height) // 2
             canvas.paste(im, (x0, y0))
+            if placements is not None:
+                placements[-1] = [x0, y0, im.width, im.height]
         box = draw.textbbox((x0 + 8, y0 + 6), label, font=font)
         draw.rectangle((box[0] - 4, box[1] - 3, box[2] + 4, box[3] + 3), fill=(0, 0, 0))
         draw.text((x0 + 8, y0 + 6), label, fill=(255, 220, 0), font=font)
@@ -576,7 +582,10 @@ def prepare_camera(cam, videos, outdir, event, motion_fps=15.0, motion_width=320
         m['frames'][key] = dict(file=os.path.relpath(path, outdir), video_time_s=round(tk, 2))
         paths.append(path)
         labels.append(f'{label}  {when}')
-    m['tile'] = os.path.relpath(tile(paths, labels, os.path.join(cdir, 'tile.jpg')), outdir)
+    placed = []
+    m['tile'] = os.path.relpath(tile(paths, labels, os.path.join(cdir, 'tile.jpg'), placements=placed), outdir)
+    m['tile_layout'] = {key: p for (key, _), p in zip(order, placed) if p is not None}
+    shutil.rmtree(os.path.join(cdir, 'original'), ignore_errors=True)      # the frames of a former masking
     marks = {key: float(t[picks[key]]) if picks.get(key) is not None else None for key, _ in order}
     plot_motion(t, d, sh, shift_px, scale, marks, f'{cid}: {m["name"]}', os.path.join(cdir, 'motion.png'))
     m['motion_plot'] = os.path.relpath(os.path.join(cdir, 'motion.png'), outdir)

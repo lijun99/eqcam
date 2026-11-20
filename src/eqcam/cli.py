@@ -78,10 +78,13 @@ def main(argv=None):
     o.add_argument('--out', required=True)
     o.add_argument('--stages', nargs='+', default=['final', 'review', 'screen'],
                    help='the stages to take the findings from, in order of preference (default: %(default)s)')
+    o.add_argument('--no-mask', action='store_true', help='do not blur the people in the tiles and frames '
+                   '(from the people_boxes of the review)')
     a = sub.add_parser('run', help='prepare, review, report')
     add_prepare_args(a)
     a.add_argument('--out', required=True)
     add_backend_args(a)
+    a.add_argument('--no-mask', action='store_true', help='do not blur the people in the tiles and frames')
     a.add_argument('--escalate-model', help='a second model for the cameras the first one flags (stage final)')
     args = parser.parse_args(argv)
 
@@ -98,7 +101,7 @@ def main(argv=None):
         print(f'{len(problems)} files with problems' if problems else 'all findings valid')
         sys.exit(1 if problems else 0)
     elif args.command == 'report':
-        report(args.out, args.stages)
+        report(args.out, args.stages, mask=not args.no_mask)
     else:
         prepare(args.cameras, args.videos, args.out, args.event, args.only, motion_fps=args.motion_fps,
                 motion_width=args.motion_width, max_seconds=args.max_seconds)
@@ -109,7 +112,7 @@ def main(argv=None):
             review(args.out, backend_from(args, args.escalate_model), 'final', args.workers, args.only, args.stage,
                    args.min_severity, args.overwrite)
             stages.insert(0, 'final')
-        report(args.out, stages)
+        report(args.out, stages, mask=not args.no_mask)
     return 0
 
 
