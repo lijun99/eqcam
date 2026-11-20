@@ -84,6 +84,7 @@ def test_prepare_finds_the_shaking_and_the_change(prepared):
     assert abs(cam1['onset_s'] - 4.0) < 0.5 and abs(cam1['end_s'] - 8.0) < 0.7
     assert 3 < cam1['shake_amplitude_px'] < 15
     assert 'scene_changed' in cam1['flags'] and cam1['priority'] == 'high'
+    assert 'view_changes_s' not in cam1 and any(7.5 < a <= 8.3 for a, _ in cam1['sudden_changes_s'])
     assert 'predicted_p_s' in cam1                            # start_utc and the event are known
     with Image.open(os.path.join(prepared, cam1['tile'])) as im:
         assert im.size == (1280, 720)
@@ -94,8 +95,59 @@ def test_shaking_of_a_noiseless_static_scene(tmp_path):
     """Identical calm frames followed by motion are a static scene, not a frozen upload"""
     write_video(str(tmp_path / 'still.mp4'), seconds=8, shake=(3.0, 6.0), change_at=100, noise=0)
     frames_small = frames.decode_small(str(tmp_path / 'still.mp4'), 320, 180, 15)
-    sh = frames.find_shaking(frames.frame_differences(frames_small), 15, 0, len(frames_small))
-    assert sh['detected'] and abs(sh['onset'] / 15 - 3.0) < 0.5
+    sh = frames.analyze_motion(frames_small, 15)
+    assert sh['detected'] and abs(sh['onset'] / 15 - 3.0) < 0.5 and not sh['changes']
+
+
+def write_tour_video(path, shake=(2.0, 4.0), seconds=12):
+    """A camera touring its views: view A (shaken between shake[0] and shake[1] s), a pan to the right from 5 to
+    7 s, a cut to another scene at 7 s, and a cut back to view A at 9.5 s"""
+    rng = np.random.default_rng(3)
+    scenes = []
+    for _ in range(2):
+        sc = ndimage.gaussian_filter(rng.uniform(0, 255, (H + 40, W + 240)), 3)
+        scenes.append((255 * (sc - sc.min()) / np.ptp(sc)).astype(np.uint8))
+    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'gray',
+           '-s', f'{W}x{H}', '-r', str(FPS), '-i', '-', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', path]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    for k in range(int(seconds * FPS)):
+        t = k / FPS
+        scene, x, dy, dx = scenes[0], 20, 0, 0
+        if shake[0] <= t < shake[1]:
+            dy, dx = int(round(4 * np.sin(2 * np.pi * 3 * t))), int(round(5 * np.cos(2 * np.pi * 2.5 * t)))
+        if 5 <= t < 7:
+            x = 20 + int(round(90 * (t - 5)))                    # 90 px/s
+        elif 7 <= t < 9.5:
+            scene = scenes[1]
+        img = scene[20 + dy:20 + dy + H, x + dx:x + dx + W].astype(np.int16)
+        img += rng.integers(-3, 4, img.shape, dtype=np.int16)
+        proc.stdin.write(np.clip(img, 0, 255).astype(np.uint8).tobytes())
+    proc.stdin.close()
+    assert proc.wait() == 0
+
+
+def test_camera_tour_is_not_shaking(tmp_path):
+    """A pan and cuts between views are view changes, not shaking; the shaking is found within its view"""
+    write_tour_video(str(tmp_path / 'tour.mp4'), shake=(100, 100))
+    sh = frames.analyze_motion(frames.decode_small(str(tmp_path / 'tour.mp4'), 320, 180, 15), 15)
+    assert not sh['detected']
+    starts = [a / 15 for a, _ in sh['changes']]
+    assert any(3.8 < s < 5.5 for s in starts)                                   # the pan from 5 s
+    assert all(any(a / 15 - 0.2 < tc < b / 15 + 0.2 for a, b in sh['changes']) for tc in (6, 7, 9.5))
+
+
+def test_shaking_in_a_touring_camera(tmp_path):
+    """The shaking in view A; BEFORE, PEAK and AFTER in view A, and LATEST when the camera is back in view A"""
+    write_tour_video(str(tmp_path / 'tour.mp4'))
+    with open(tmp_path / 'cameras.csv', 'w', newline='') as f:
+        csv.writer(f).writerows([['camera_id', 'name', 'lat', 'lon', 'video'], ['tour', 'Tour', 34, -118, 'tour.mp4']])
+    frames.prepare(str(tmp_path / 'cameras.csv'), str(tmp_path), str(tmp_path / 'out'))
+    m = metrics_of(str(tmp_path / 'out'))['tour']
+    assert m['shaking_detected'] and abs(m['onset_s'] - 2.0) < 0.5 and abs(m['end_s'] - 4.0) < 0.7
+    t = {k: v['video_time_s'] for k, v in m['frames'].items()}
+    assert t['before'] < 2.1 and 2 < t['peak'] < 4 and 4 <= t['after'] < 5 and t['latest'] > 10
+    assert 'latest_in_another_view' not in m['flags'] and 'scene_changed' not in m['flags']
+    assert len(m['view_changes_s']) >= 2 and 'not shaking' in m['motion_text']
 
 
 def test_prepare_quiet_and_missing(prepared):

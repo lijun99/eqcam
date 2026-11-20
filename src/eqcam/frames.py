@@ -1,11 +1,14 @@
 """prepare: the motion of each camera's video, and the frames for review
 
-Each video is decoded at a low resolution and a uniform frame rate to measure its motion: the differences of
-consecutive frames, and the shift of the whole image relative to a calm frame (the camera shaking). From them,
-the shaking (onset, peak, end), and the frames before, at the peak, after and the latest, saved at full
-resolution with a labeled 2 x 2 tile of them for review. Cameras whose video is missing, edited (scene cuts),
-ends dark or frozen, moved, or changed between before and after are flagged. With the event (origin time,
-epicenter) and the time of the first frame of a video, the onset is searched near the predicted arrivals.
+Each video is decoded at a low resolution and a uniform frame rate to measure its motion by phase correlation:
+the shift of each frame relative to the one before it and to the one 1 s before it. From them, the views: the
+camera panning, tilting, zooming or switching views (a steady drift of the image, or frames that do not match)
+separates stable views; and the shaking: the whole image jittering back and forth within a stable view (onset,
+peak, end). The frames before, at the peak and after the shaking are taken in its view, and the latest frame in
+the same view if the camera comes back to it; they are saved at full resolution with a labeled 2 x 2 tile for
+review. Cameras whose video is missing, ends dark or frozen, moved, or changed between before and after are
+flagged. With the event (origin time, epicenter) and the time of the first frame of a video, the onset is
+searched near the predicted arrivals.
 """
 
 import csv
@@ -102,55 +105,183 @@ def frame_differences(frames, chunk=200):
     return d
 
 
-def image_shifts(frames, ref, chunk=100):
+def _spectra(frames, win):
+    f = frames.astype(np.float32)
+    return fft.fft2((f - f.mean(axis=(1, 2), keepdims=True)) * win, axes=(1, 2), workers=-1)
+
+
+def _correlation_peaks(X):
+    """The shift (down, across) and the height of the peak of the phase correlation of each cross-power spectrum
+    in X; sub-pixel from a parabola through the peak and its neighbors; the height is 1 for identical images and
+    near 0 for unrelated ones"""
+    c = fft.ifft2(X / (np.abs(X) + 1e-6), axes=(1, 2), workers=-1).real
+    n, h, w = c.shape
+    shifts, heights = np.empty((n, 2), np.float32), np.empty(n, np.float32)
+    for k in range(n):
+        iy, ix = np.unravel_index(np.argmax(c[k]), (h, w))
+        heights[k] = c[k][iy, ix]
+        sub = []
+        for i, size, line in ((iy, h, c[k][:, ix]), (ix, w, c[k][iy])):
+            cm, c0, cp = line[(i - 1) % size], line[i], line[(i + 1) % size]
+            den = cm - 2 * c0 + cp
+            frac = 0.5 * (cm - cp) / den if den < 0 else 0.0
+            sub.append(((i + frac + size / 2) % size) - size / 2)
+        shifts[k] = sub
+    return shifts, heights
+
+
+def _window(h, w):
+    return np.outer(np.hanning(h), np.hanning(w)).astype(np.float32)
+
+
+def image_shifts(frames, ref, chunk=100, heights=False):
     """The shift (down, across) of each frame relative to frame ref, by phase correlation, in pixels of the
-    frames; sub-pixel from a parabola through the peak and its neighbors"""
+    frames (and the heights of the correlation peaks)"""
     n, h, w = frames.shape
-    win = np.outer(np.hanning(h), np.hanning(w)).astype(np.float32)
-    r = frames[ref].astype(np.float32)
-    R = np.conj(fft.fft2((r - r.mean()) * win))
-    shifts = np.empty((n, 2), np.float32)
+    win = _window(h, w)
+    R = np.conj(_spectra(frames[ref:ref + 1], win))
+    shifts, peaks = np.empty((n, 2), np.float32), np.empty(n, np.float32)
     for a in range(0, n, chunk):
-        f = frames[a:a + chunk].astype(np.float32)
-        f = (f - f.mean(axis=(1, 2), keepdims=True)) * win
-        X = R * fft.fft2(f, axes=(1, 2), workers=-1)
-        c = fft.ifft2(X / (np.abs(X) + 1e-6), axes=(1, 2), workers=-1).real
-        for k in range(len(c)):
-            iy, ix = np.unravel_index(np.argmax(c[k]), (h, w))
-            sub = []
-            for i, size, line in ((iy, h, c[k][:, ix]), (ix, w, c[k][iy])):
-                cm, c0, cp = line[(i - 1) % size], line[i], line[(i + 1) % size]
-                den = cm - 2 * c0 + cp
-                frac = 0.5 * (cm - cp) / den if den < 0 else 0.0
-                sub.append(((i + frac + size / 2) % size) - size / 2)
-            shifts[a + k] = sub
-    return shifts
+        shifts[a:a + chunk], peaks[a:a + chunk] = _correlation_peaks(R * _spectra(frames[a:a + chunk], win))
+    return (shifts, peaks) if heights else shifts
 
 
-def find_shaking(d, fps, lo, hi, calm_s=2.0, lead_s=0.5):
-    """The onset, peak and end of the shaking (frame indices) from the frame differences d, searched in frames
-    lo-hi; the threshold is 10 times the median difference of the first calm frames (after any leading freeze)"""
-    frozen = d < 0.05
-    run = ndimage.median_filter(d, size=5, mode='nearest') if len(d) else d
-    first_live = 0
-    if len(d) and frozen[0] and not frozen.all():
-        k = int(np.argmax(~frozen))
-        # a leading freeze (a re-upload) resumes calmly; identical frames followed at once by motion are a
-        # static, noiseless scene whose calm frames are the frozen ones
-        first_live = k if run[k:k + 5].max() < 2.0 else 0
-    calm = d[first_live:first_live + max(5, int(calm_s * fps))]
-    thr = max(0.5, 10 * float(np.median(calm))) if len(calm) else 0.5
-    lo, hi = max(lo, first_live), min(hi, len(d))
-    above = run[lo:hi] > thr
-    if not above.any():
-        return dict(detected=False, threshold=thr, first_live=first_live)
-    onset = lo + int(np.argmax(above)) + 1
-    end = lo + int(np.flatnonzero(above)[-1]) + 1
-    smooth = ndimage.uniform_filter1d(d, 3)
-    peak = onset + int(np.argmax(smooth[onset - 1:end]))
-    ref = max(first_live, onset - max(1, int(lead_s * fps)))
-    return dict(detected=True, threshold=thr, first_live=first_live, onset=onset, peak=peak, end=end, ref=ref,
-                calm_before=bool(onset - first_live > calm_s * fps))
+def lagged_shifts(frames, lag, chunk=100):
+    """The shift of each frame relative to the frame lag frames before it, and the height of the correlation
+    peak (nan for the first lag frames)"""
+    n, h, w = frames.shape
+    win = _window(h, w)
+    shifts, peaks = np.full((n, 2), np.nan, np.float32), np.full(n, np.nan, np.float32)
+    for a in range(lag, n, chunk):
+        b = min(a + chunk, n)
+        F = _spectra(frames[a - lag:b], win)
+        shifts[a:b], peaks[a:b] = _correlation_peaks(np.conj(F[:b - a]) * F[lag:])
+    return shifts, peaks
+
+
+def runs(mask):
+    """The runs of True in mask, as [(start, end)] with end exclusive"""
+    edges = np.flatnonzero(np.diff(np.concatenate([[0], mask.astype(np.int8), [0]])))
+    return list(zip(edges[::2].tolist(), edges[1::2].tolist()))
+
+
+MOVE_PX_S = 1.0      # the image drifting faster than this (pixels of the 320-wide frames per s): the camera moves
+JITTER_FACTOR = 8.0  # shaking: jitter above this many times the calm jitter of the camera
+JITTER_FLOOR = 0.005  # px per frame
+
+
+def analyze_motion(frames, fps, lo=0, hi=None, quiet_at=None, lead_s=0.5, calm_s=2.0):
+    """The views and the shaking of a video. The view changes where consecutive frames do not match (a cut or a
+    switch of preset), where frames 1 s apart do not match (a zoom), or where the image drifts steadily (the
+    camera panning or tilting); between them are the stable views. The shaking is the jitter of the whole image
+    back and forth within a stable view: the mean shift between consecutive frames, above JITTER_FACTOR times
+    its median. The episode searched for starts in frames lo-hi; quiet_at is the frame for BEFORE when there is
+    no shaking (e.g., at the predicted P arrival)."""
+    n = len(frames)
+    hi = n if hi is None else min(hi, n)
+    one_s = max(2, int(round(fps)))
+    s1, q1 = lagged_shifts(frames, 1)
+    s_1s, q_1s = lagged_shifts(frames, one_s) if n > one_s else (np.full((n, 2), np.nan), np.full(n, np.nan))
+    cut = np.nan_to_num(q1, nan=1.0) < 0.3 * np.nanmedian(q1) if n > 1 else np.zeros(n, bool)
+    lost = np.nan_to_num(q_1s, nan=1.0) < 0.3 * np.nanmedian(q_1s) if n > one_s else np.zeros(n, bool)
+    steps = np.where(cut[:, None], 0.0, np.nan_to_num(s1))
+    step = np.hypot(*steps.T)
+    jitter = ndimage.uniform_filter1d(ndimage.median_filter(step, 3, mode='nearest'), max(1, one_s // 2))
+    # the resting position of the image: the running mean (3 s) of its position, which shaking back and forth
+    # hardly moves, but a pan, a tilt or a move to another preset does; and the path of the image in the same
+    # time: the camera moves when its resting position drifts, and steadily (a quarter of the path or more)
+    rest = ndimage.uniform_filter1d(np.cumsum(steps, axis=0), 3 * one_s, axis=0, mode='nearest')
+    half = one_s // 2
+    drift = np.zeros(n, np.float32)
+    if n > 2 * half:
+        drift[half:n - half] = np.hypot(*(rest[2 * half:] - rest[:n - 2 * half]).T) * fps / (2 * half)
+    path = ndimage.uniform_filter1d(step, 3 * one_s, mode='nearest') * fps
+    moving = np.zeros(n, bool)
+    for a, b in runs((drift > MOVE_PX_S) & (drift > 0.25 * path)):
+        a, b = trim_move(steps, rest, a, b, max(2, one_s // 3))
+        moving[a:b] = True
+    pad = max(1, int(0.3 * fps))
+    changing = ndimage.binary_dilation(moving | cut | lost, iterations=pad)
+    # a change after which the image still matches the one before it, at the same place, is a sudden change of
+    # the scene (lights out, smoke, a collapse, something passing close to the camera), not of the view
+    q_typical = float(np.nanmedian(q_1s)) if np.isfinite(q_1s).any() else 0.5
+    sudden = []
+    for a, b in runs(changing):
+        if a > 0 and b < n and not moving[a:b].any():
+            s, q = image_shifts(frames[[a - 1, b]], 0, heights=True)
+            if matches(q[1], s[1], q_typical, frames.shape[2], loose=False):
+                changing[a:b] = False
+                sudden.append((a + pad, max(a + pad + 1, b - pad)))
+    segments = [(a, b) for a, b in runs(~changing) if b - a >= one_s]
+    changes = runs(changing)
+    stable = np.zeros(n, bool)
+    for a, b in segments:
+        stable[a:b] = True
+    base = float(np.median(jitter[stable])) if stable.any() else float(np.median(jitter))
+    thr = max(JITTER_FLOOR, JITTER_FACTOR * base)
+    out = dict(jitter=jitter, drift=drift, q1=q1, q_1s=q_1s, changing=changing, segments=segments,
+               changes=changes, sudden=sudden, threshold=thr, detected=False)
+
+    # the episodes of shaking: runs above the threshold within a view, merged across gaps shorter than 2 s
+    episodes = []
+    for a, b in segments:
+        for ra, rb in runs((jitter[a:b] > thr)):
+            ra, rb = a + ra, a + rb
+            if episodes and episodes[-1][2] == (a, b) and ra - episodes[-1][1] < 2 * fps:
+                episodes[-1][1] = rb
+            else:
+                episodes.append([ra, rb, (a, b)])
+    episodes = [e for e in episodes if e[1] - e[0] >= max(2, int(0.3 * fps)) and lo <= e[0] < hi]
+    if episodes:
+        onset, end, (a, b) = max(episodes, key=lambda e: float(np.sum(jitter[e[0]:e[1]] / thr - 1)))
+        end -= 1
+        peak = onset + int(np.argmax(jitter[onset:end + 1]))
+        out.update(detected=True, onset=onset, end=end, peak=peak, segment=(a, b),
+                   ref=max(a, onset - max(1, int(lead_s * fps))), calm_before=bool(onset - a > calm_s * fps),
+                   at_view_change=bool(end >= b - 1 - int(0.5 * fps)))
+    else:
+        target = 0 if quiet_at is None else int(np.clip(quiet_at, 0, n - 1))
+        seg = next(((a, b) for a, b in segments if b > target), segments[-1] if segments else (0, n))
+        out.update(segment=seg, ref=int(np.clip(target, seg[0], seg[1] - 1)))
+    return out
+
+
+def trim_move(steps, rest, a, b, k):
+    """The frames a-b where the camera moves, trimmed to those where the image steps along the move (k frames
+    in a row at half the typical step or more): the running mean that finds a move spreads it in time"""
+    disp = rest[min(b, len(rest) - 1)] - rest[a]
+    norm = float(np.hypot(*disp))
+    if norm == 0 or b - a < k:
+        return a, b
+    along = steps[a:b] @ (disp / norm)
+    fwd = along[along > 0]
+    good = along >= 0.5 * float(np.median(fwd)) if len(fwd) else np.zeros(b - a, bool)
+    sustained = np.convolve(good, np.ones(k), 'valid') >= k                   # good[i:i+k] all True
+    if not sustained.any():
+        return a, b
+    first, last = int(np.argmax(sustained)), len(sustained) - 1 - int(np.argmax(sustained[::-1]))
+    return a + first, a + last + k
+
+
+def matches(q, shift, q_typical, width, loose=True):
+    """Whether two frames show the same view, from the height q of the peak of their phase correlation (about
+    q_typical for frames 1 s apart in a view, 0.02-0.05 for unrelated views) and their shift: a good match
+    within a tenth of the width (loose), or a weaker one at nearly the same place (the scene changed in part)"""
+    d = float(np.hypot(*shift))
+    return bool((loose and q >= 0.5 * q_typical and d <= 0.1 * width) or (q >= 0.1 * q_typical and d <= 4))
+
+
+def same_view(frames, ref, segments, after, q_typical):
+    """The last frame after frame after in the same view as frame ref: the end of the last stable view whose
+    frames match it; (frame, shift) or (None, None)"""
+    for a, b in reversed(segments):
+        k = b - 1
+        if k <= after:
+            break
+        s, q = image_shifts(frames[[ref, k]], 0, heights=True)
+        if matches(q[1], s[1], q_typical, frames.shape[2]):
+            return k, s[1]
+    return None, None
 
 
 def changed_fraction(a, b, shift, level=25.0):
@@ -190,20 +321,33 @@ def tile(paths, labels, out, size=(640, 360)):
     return out
 
 
-def plot_motion(t, d, shift_px, sh, marks, title, out):
-    fig, axes = plt.subplots(2, 1, figsize=(9, 4.6), sharex=True, constrained_layout=True)
+def plot_motion(t, d, sh, shift_px, scale, marks, title, out):
+    """The frame differences, the jitter and the drift of the image (the view changes shaded), and the image
+    shift during the shaking"""
+    fig, axes = plt.subplots(3, 1, figsize=(9, 6.4), sharex=True, constrained_layout=True)
     axes[0].plot(t[1:], d, color='#4a6fa5', lw=1)
-    axes[0].axhline(sh['threshold'], color='#d62728', lw=0.8, ls='--', label='threshold of the shaking')
-    axes[0].legend(frameon=False, fontsize=8)
     axes[0].set_ylabel('frame difference', fontsize=9)
     axes[0].set_title(title, fontsize=10, loc='left')
+    axes[1].semilogy(t, np.maximum(sh['jitter'] * scale, 1e-4), lw=1, color='#1f77b4', label='jitter, px per frame')
+    axes[1].semilogy(t, np.maximum(sh['drift'] * scale, 1e-4), lw=1, color='#ff7f0e', label='drift, px/s')
+    axes[1].axhline(sh['threshold'] * scale, color='#d62728', lw=0.8, ls='--', label='threshold of the shaking')
+    axes[1].set_ylim(bottom=max(1e-4, 0.1 * sh['threshold'] * scale))
+    axes[1].legend(frameon=False, fontsize=7, ncol=3, loc='upper right')
+    axes[1].set_ylabel('image motion', fontsize=9)
     if shift_px is not None:
-        axes[1].plot(t, shift_px[:, 1], lw=1, label='across')
-        axes[1].plot(t, shift_px[:, 0], lw=1, label='down')
-        axes[1].legend(frameon=False, fontsize=8)
-    axes[1].set_ylabel('image shift, px', fontsize=9)
-    axes[1].set_xlabel('time in the video, s', fontsize=9)
+        axes[2].plot(t, shift_px[:, 1], lw=1, label='across')
+        axes[2].plot(t, shift_px[:, 0], lw=1, label='down')
+        axes[2].legend(frameon=False, fontsize=8)
+    axes[2].set_ylabel('image shift, px', fontsize=9)
+    axes[2].set_xlabel('time in the video, s', fontsize=9)
+    dt_frame = t[1] - t[0] if len(t) > 1 else 0
     for ax in axes:
+        for a, b in sh['changes']:
+            ax.axvspan(t[a], t[b - 1] + dt_frame, color='0.85', lw=0,
+                       label='view changes' if ax is axes[0] and a == sh['changes'][0][0] else None)
+        for a, b in sh['sudden']:
+            ax.axvspan(t[a], t[b - 1] + dt_frame, color='#f4b6b6', lw=0,
+                       label='sudden changes' if ax is axes[0] and a == sh['sudden'][0][0] else None)
         for name, tm in marks.items():
             if tm is not None:
                 ax.axvline(tm, color='#555555', lw=0.7, ls=':')
@@ -212,6 +356,8 @@ def plot_motion(t, d, shift_px, sh, marks, title, out):
                                 textcoords='offset points', fontsize=7)
         ax.grid(alpha=0.3)
         ax.tick_params(labelsize=8)
+    if sh['changes'] or sh['sudden']:
+        axes[0].legend(frameon=False, fontsize=8, loc='upper right')
     fig.savefig(out, dpi=100)
     plt.close(fig)
 
@@ -221,9 +367,18 @@ def motion_text(m):
     if 'no_video' in m['flags']:
         return 'No video for this camera.'
     parts = []
+    changes = m.get('view_changes_s') or []
+    if changes:
+        listed = ', '.join(f'{a}-{b} s' for a, b in changes[:8]) + (', ...' if len(changes) > 8 else '')
+        parts.append(f'The view changes {len(changes)} times (the camera pans, zooms or switches views; this is '
+                     f'not shaking): {listed}.')
+    sudden = m.get('sudden_changes_s') or []
+    if sudden:
+        parts.append('The scene changes suddenly in the same view (look for what changed) at '
+                     + ', '.join(f'{a}-{b} s' for a, b in sudden[:8]) + '.')
     if m.get('shaking_detected'):
-        parts.append(f"Shaking from {m['onset_s']} s to {m['end_s']} s in the video (above the threshold for "
-                     f"{m['strong_duration_s']} s), peak at {m['peak_s']} s; image shake about "
+        parts.append(f"Shaking (the whole image jittering within one view) from {m['onset_s']} s to {m['end_s']} s "
+                     f"in the video ({m['strong_duration_s']} s), peak at {m['peak_s']} s; image shake about "
                      f"{m['shake_amplitude_px']} px, peak image velocity {m['peak_image_velocity_px_s']} px/s, "
                      f"permanent shift {m['permanent_shift_px']} px.")
     elif 'shaking_detected' in m:
@@ -232,8 +387,13 @@ def motion_text(m):
         if key in m:
             parts.append(f"Image changed between BEFORE and {key.rsplit('_', 1)[1].upper()}: "
                          f"{100 * m[key]:.1f} % of the area.")
-    if m['flags']:
-        parts.append('Flags: ' + ', '.join(m['flags']) + '.')
+    if 'latest_in_another_view' in m['flags']:
+        parts.append('LATEST shows another view than BEFORE: do not compare them for changes.')
+    elif changes and 'latest' in m.get('frames', {}):
+        parts.append(f"LATEST is the last frame in the same view as BEFORE ({m['frames']['latest']['video_time_s']} s).")
+    flags = [f for f in m['flags'] if not f.startswith('view_changes')]
+    if flags:
+        parts.append('Flags: ' + ', '.join(flags) + '.')
     return ' '.join(parts)
 
 
@@ -281,45 +441,64 @@ def prepare_camera(cam, videos, outdir, event, motion_fps=15.0, motion_width=320
         raise ValueError(f'{n} frames decoded')
     t = start + np.arange(n) / motion_fps
     d = frame_differences(frames)
-    cuts = np.flatnonzero((d > 30) & (d > 8 * ndimage.median_filter(d, size=9, mode='nearest')))
-    if len(cuts):
-        m['flags'].append(f'scene_cuts ({len(cuts)}): an edited video, the motion is not reliable')
     lo = int((lo_s - start) * motion_fps) if lo_s else 0
     hi = int((hi_s - start) * motion_fps) if hi_s is not None else n
-    sh = find_shaking(d, motion_fps, max(lo, 0), max(hi, 1))
+    quiet_at = int((m['predicted_p_s'] - 2 - start) * motion_fps) if 'predicted_p_s' in m else None
+    sh = analyze_motion(frames, motion_fps, max(lo, 0), max(hi, 1), quiet_at)
     scale = width / motion_width
     m['shaking_detected'] = sh['detected']
-    m['threshold'] = round(sh['threshold'], 2)
+    m['jitter_threshold_px'] = round(sh['threshold'] * scale, 4)
+    if sh['changes']:
+        m['view_changes_s'] = [[round(float(t[a]), 1), round(float(t[b - 1]), 1)] for a, b in sh['changes']]
+        m['flags'].append(f"view_changes ({len(sh['changes'])})")
+    if sh['sudden']:
+        m['sudden_changes_s'] = [[round(float(t[a]), 1), round(float(t[b - 1]), 1)] for a, b in sh['sudden']]
 
     brightness = frames.reshape(n, -1).mean(axis=1)
     tail = max(1, int(2 * motion_fps))
-    shifts = shift_px = None
+    shift_px = None
+    a, b = sh['segment']
+    ref = sh['ref']
+    picks = dict(before=ref, peak=None, after=None, latest=None)
     if sh['detected']:
-        ref, onset, peak, end = sh['ref'], sh['onset'], sh['peak'], sh['end']
-        shifts = image_shifts(frames, ref)
-        shift_px = shifts * scale
-        before = shift_px[max(sh['first_live'], ref - tail):ref + 1]
+        onset, peak, end = sh['onset'], sh['peak'], sh['end']
+        shift_px = np.full((n, 2), np.nan, np.float32)
+        shift_px[a:b] = image_shifts(frames[a:b], ref - a) * scale        # within the view of the shaking
+        before = shift_px[max(a, ref - tail):ref + 1]
         during = shift_px[onset:end + 1]
-        after_i = min(n - 1, end + int(motion_fps))
-        settled = shift_px[after_i:min(n, after_i + tail)]
-        vel = np.linalg.norm(np.diff(ndimage.uniform_filter1d(shift_px, 3, axis=0), axis=0), axis=1) * motion_fps
+        after_i = min(b - 1, end + int(motion_fps))
+        settled = shift_px[after_i:min(b, after_i + tail)] if after_i > end else shift_px[:0]
+        vel = np.linalg.norm(np.diff(ndimage.uniform_filter1d(shift_px[a:b], 3, axis=0), axis=0), axis=1)
         permanent = float(np.linalg.norm(np.median(settled, 0) - np.median(before, 0))) if len(settled) else None
         m.update(onset_s=round(float(t[onset]), 2), peak_s=round(float(t[peak]), 2), end_s=round(float(t[end]), 2),
                  strong_duration_s=round((end - onset) / motion_fps, 2),
                  shake_amplitude_px=round(float(np.max(np.ptp(during, axis=0)) / 2), 1),
-                 peak_image_velocity_px_s=round(float(vel[onset - 1:end].max()), 1),
+                 peak_image_velocity_px_s=round(float(vel[max(onset - a - 1, 0):end - a].max()) * motion_fps, 1),
                  permanent_shift_px=None if permanent is None else round(permanent, 1),
                  calm_frames_before=sh['calm_before'])
         if not sh['calm_before']:
             m['flags'].append('no_calm_frames_before_the_shaking')
-        if end >= n - 2:
-            m['flags'].append('shaking_until_the_end_of_the_clip')
+        if sh['at_view_change']:
+            m['flags'].append('shaking_until_a_view_change' if b < n else 'shaking_until_the_end_of_the_clip')
         if permanent and permanent > 3:
             m['flags'].append('camera_moved')
-        picks = dict(before=ref, peak=peak, after=after_i, latest=n - 1)
+        picks.update(peak=peak, after=after_i)
+
+    # the latest frame in the same view as BEFORE (cameras that tour their views come back to it)
+    last = picks['after'] if picks['after'] is not None else ref
+    k, latest_shift = None, None
+    if not any(c0 > last for c0, _ in sh['changes']):           # the view does not change after AFTER
+        if n - 1 > last:
+            k = n - 1
+            s, _ = image_shifts(frames[[ref, k]], 0, heights=True)
+            latest_shift = s[1] if np.hypot(*s[1]) <= 0.1 * motion_width else np.zeros(2)
     else:
-        ref = sh['first_live']
-        picks = dict(before=ref, peak=None, after=None, latest=n - 1)
+        q_typical = float(np.nanmedian(sh['q_1s'])) if np.isfinite(sh['q_1s']).any() else 0.5
+        k, latest_shift = same_view(frames, ref, sh['segments'], last, q_typical)
+        if k is None and n - 1 > last:
+            k = n - 1
+            m['flags'].append('latest_in_another_view')
+    picks['latest'] = k
 
     # the end of the video: dark or frozen
     if brightness[-tail:].mean() < max(20.0, 0.3 * brightness[ref]):
@@ -327,22 +506,23 @@ def prepare_camera(cam, videos, outdir, event, motion_fps=15.0, motion_width=320
     if n > 2 * tail and (d[-tail:] < 0.05).all() and not (d[:tail] < 0.05).all():
         m['flags'].append('frozen_at_the_end')
 
-    # the change between before and after, and before and the latest frame
-    for name in ('after', 'latest'):
-        k = picks[name]
-        if k is not None and k != ref:
-            s = shifts[k] if shifts is not None else np.zeros(2)
-            m[f'changed_fraction_{name}'] = round(changed_fraction(frames[ref], frames[k], s), 4)
+    # the change between before and after, and before and the latest frame, in the same view
+    if picks['after'] is not None and picks['after'] != ref:
+        m['changed_fraction_after'] = round(changed_fraction(frames[ref], frames[picks['after']],
+                                                             shift_px[picks['after']] / scale), 4)
+    if picks['latest'] is not None and latest_shift is not None:
+        m['changed_fraction_latest'] = round(changed_fraction(frames[ref], frames[picks['latest']], latest_shift), 4)
     if max(m.get('changed_fraction_after', 0), m.get('changed_fraction_latest', 0)) > 0.03:
         m['flags'].append('scene_changed')
 
     # the frames at full resolution, and the tile
-    if picks['after'] is not None and picks['latest'] - picks['after'] < 2 * motion_fps:
+    other = ' (OTHER VIEW)' if 'latest_in_another_view' in m['flags'] else ''
+    if picks['after'] is not None and (picks['latest'] is None or picks['latest'] - picks['after'] < 2 * motion_fps):
         mid = (sh['peak'] + sh['end']) // 2
         picks['latest'] = None if mid == sh['peak'] else mid
         order = [('before', 'BEFORE'), ('peak', 'PEAK SHAKING'), ('latest', 'LATE SHAKING'), ('after', 'AFTER')]
     else:
-        order = [('before', 'BEFORE'), ('peak', 'PEAK SHAKING'), ('after', 'AFTER'), ('latest', 'LATEST')]
+        order = [('before', 'BEFORE'), ('peak', 'PEAK SHAKING'), ('after', 'AFTER'), ('latest', 'LATEST' + other)]
     m['frames'], paths, labels = {}, [], []
     for key, label in order:
         k = picks[key]
@@ -358,16 +538,16 @@ def prepare_camera(cam, videos, outdir, event, motion_fps=15.0, motion_width=320
         labels.append(f'{label}  {when}')
     m['tile'] = os.path.relpath(tile(paths, labels, os.path.join(cdir, 'tile.jpg')), outdir)
     marks = {key: float(t[picks[key]]) if picks.get(key) is not None else None for key, _ in order}
-    plot_motion(t, d, shift_px, sh, marks, f'{cid}: {m["name"]}', os.path.join(cdir, 'motion.png'))
+    plot_motion(t, d, sh, shift_px, scale, marks, f'{cid}: {m["name"]}', os.path.join(cdir, 'motion.png'))
     m['motion_plot'] = os.path.relpath(os.path.join(cdir, 'motion.png'), outdir)
     np.savez_compressed(os.path.join(cdir, 'motion.npz'), t=t, d=d, brightness=brightness,
+                        jitter_px=sh['jitter'] * scale, drift_px_s=sh['drift'] * scale, changing=sh['changing'],
                         shift_px=shift_px if shift_px is not None else np.zeros((0, 2)))
 
     strong = sh['detected'] and (m['shake_amplitude_px'] > 2 or m['peak_image_velocity_px_s'] > 20)
     alarm = {'dark_at_the_end', 'frozen_at_the_end', 'scene_changed', 'camera_moved'} & set(m['flags'])
     m['priority'] = 'high' if alarm else ('normal' if strong else 'low')
     return m
-
 
 def prepare(cameras_csv, videos, out, event_json=None, only=None, **options):
     """Prepare every camera; writes OUT/metrics.json, OUT/tasks.json and OUT/event.json"""

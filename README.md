@@ -16,9 +16,11 @@ The result is a table and a map, with a severity (0-3), a confidence and a one-l
 
 ```
 videos.csv + videos + event.json
-  -> eqcam prepare   motion of each video (frame differences, image shift); onset, peak and end of the shaking;
-                     frames BEFORE / PEAK SHAKING / AFTER / LATEST in a labeled 2 x 2 tile; flags
-                     (no video, dark or frozen at the end, camera moved, scene changed, edited video)
+  -> eqcam prepare   motion of each video (image shifts by phase correlation): the stable views between the
+                     camera panning, zooming or switching views; the shaking (the image jittering back and forth
+                     within a view): onset, peak, end; frames BEFORE / PEAK SHAKING / AFTER / LATEST in the
+                     same view, in a labeled 2 x 2 tile; flags (no video, dark or frozen at the end, camera
+                     moved, scene changed, view changes, latest in another view)
   -> eqcam review    one request per camera (the tile and the motion in words) to a backend, in parallel;
                      structured JSON findings; an optional second stage on the cameras the first one flagged
   -> eqcam report    survey.csv, survey.json, map.html (Leaflet), map.png

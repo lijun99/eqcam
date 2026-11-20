@@ -26,7 +26,11 @@ eqcam prepare --cameras videos.csv --videos <folder> --event event.json --out ru
 
 It writes, per camera, `cameras/<id>/tile.jpg` (BEFORE, PEAK SHAKING, AFTER, LATEST or LATE SHAKING, labeled),
 the full frames, `motion.png`, and `metrics.json` and `tasks.json` (high priority first). Report the counts by
-priority and the flags (no_video, dark_at_the_end, frozen_at_the_end, camera_moved, scene_changed, scene_cuts).
+priority and the flags (no_video, dark_at_the_end, frozen_at_the_end, camera_moved, scene_changed,
+view_changes, latest_in_another_view, shaking_until_a_view_change). Cameras that pan or tour their preset views
+are split into stable views: the shaking is searched only within a view (the image jittering back and forth, not
+drifting), and BEFORE, PEAK and AFTER are in that view; `motion_text` lists the view changes and any sudden
+change of the scene in the same view.
 
 ## 2. Review
 
