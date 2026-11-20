@@ -231,3 +231,13 @@ def test_review_escalate_and_report(prepared):
     with open(os.path.join(prepared, 'survey.csv')) as f:
         table = list(csv.DictReader(f))
     assert table[0]['smoke_or_dust'] == 'yes'
+
+
+def test_map_tags():
+    """Every detection of the schema is a filter of the map, with a label; tags from the findings and flags"""
+    assert set(schema.DETECTIONS) <= set(report.TAGS) and set(report.TAGS) <= set(report.TAG_LABELS)
+    fd = {'shaking': {'visible': 'yes'}, 'fire': {'present': 'uncertain'}, 'water': {'present': 'no'},
+          'camera_status': 'ok'}
+    assert report.tags({'findings': fd, 'flags': []}) == {'shaking': 'yes', 'fire': 'uncertain'}
+    assert report.tags({'findings': {}, 'flags': ['no_video']}) == {'camera_problem': 'yes'}
+    assert report.tags({'findings': {'camera_status': 'dark'}}) == {'camera_problem': 'yes'}

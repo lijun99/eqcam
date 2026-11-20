@@ -20,6 +20,31 @@ from matplotlib.ticker import MaxNLocator           # noqa: E402
 COLORS = {0: '#8a8f98', 1: '#e3b505', 2: '#f08a24', 3: '#d62728', None: '#4a6fa5'}
 NAMES = {**SEVERITY_NAMES, None: 'not reviewed'}
 
+# the tags the cameras can be filtered by on the map: the shaking, every detection, and camera outages
+TAG_LABELS = {'shaking': 'Shaking', 'structural_damage': 'Structural damage',
+              'infrastructure_damage': 'Road, bridge or utility damage', 'landslide': 'Landslide or rockfall',
+              'ground_failure': 'Ground failure', 'fire': 'Fire', 'smoke_or_dust': 'Smoke or dust',
+              'power_outage': 'Power outage', 'water': 'Flooding or water', 'people_response': 'People responding',
+              'camera_problem': 'Camera dark, frozen or no video'}
+TAGS = ['shaking', *DETECTIONS, 'camera_problem']
+PROBLEM_FLAGS = ('no_video', 'dark_at_the_end', 'frozen_at_the_end')
+PROBLEM_STATUS = ('dark', 'frozen', 'obstructed', 'unusable')
+
+
+def tags(r):
+    """The tags of a camera, {tag: 'yes' or 'uncertain'}"""
+    fd, out = r['findings'], {}
+    shaking = (fd.get('shaking') or {}).get('visible')
+    if shaking in ('yes', 'uncertain'):
+        out['shaking'] = shaking
+    for key in DETECTIONS:
+        present = (fd.get(key) or {}).get('present')
+        if present in ('yes', 'uncertain'):
+            out[key] = present
+    if fd.get('camera_status') in PROBLEM_STATUS or any(f in PROBLEM_FLAGS for f in r.get('flags', [])):
+        out['camera_problem'] = 'yes'
+    return out
+
 
 def merge(out, stages=('final', 'review', 'screen')):
     with open(os.path.join(out, 'metrics.json')) as f:
@@ -72,6 +97,8 @@ def popup(r):
                 lines.append(f"{e(key.replace('_', ' '))}: {e(item['present'])}. {e(item.get('description', ''))} "
                              f"{e(item.get('where', ''))}")
         shaking = fd.get('shaking') or {}
+        if shaking.get('visible') in ('yes', 'uncertain'):
+            lines.append(f"shaking: {e(shaking['visible'])}. {e('; '.join(shaking.get('effects') or []))}")
         if shaking.get('intensity_mmi'):
             lines.append(f"Intensity (MMI) {e(shaking['intensity_mmi'])}: {e(shaking.get('basis', ''))}")
     elif rec.get('error'):
@@ -90,7 +117,10 @@ def title_of(event):
 
 def map_html(rows, event, out):
     points = [dict(lat=r['lat'], lon=r['lon'], color=COLORS.get(r['severity'], COLORS[None]), label=r['camera_id'],
-                   popup=popup(r)) for r in rows if r.get('lat') is not None]
+                   popup=popup(r), tags=tags(r)) for r in rows if r.get('lat') is not None]
+    tag_list = [dict(key=k, label=TAG_LABELS.get(k, k.replace('_', ' ').capitalize()),
+                     yes=sum(p['tags'].get(k) == 'yes' for p in points),
+                     uncertain=sum(p['tags'].get(k) == 'uncertain' for p in points)) for k in TAGS]
     epi = [event['lat'], event['lon']] if event.get('lat') is not None else None
     title = html.escape(title_of(event))
     legend = ''.join(f'<div><span style="background:{COLORS[k]}"></span>{html.escape(v)}</div>'
@@ -100,9 +130,13 @@ def map_html(rows, event, out):
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>html,body,#map{{height:100%;margin:0}} .legend{{background:#fff;padding:6px 8px;font:12px sans-serif}}
-.legend span{{display:inline-block;width:10px;height:10px;border-radius:5px;margin-right:6px}}</style>
+.legend span{{display:inline-block;width:10px;height:10px;border-radius:5px;margin-right:6px}}
+.filter{{background:#fff;padding:6px 10px;font:12px sans-serif;line-height:1.6;max-height:70vh;overflow:auto}}
+.filter label{{display:block;cursor:pointer;white-space:nowrap}} .filter .zero{{color:#999}}
+.filter .n{{color:#555;margin-left:4px}} .filter hr{{margin:4px 0;border:0;border-top:1px solid #ddd}}</style>
 </head><body><div id="map"></div><script>
 const points = {json.dumps(points)};
+const tags = {json.dumps(tag_list)};
 const epi = {json.dumps(epi)};
 const map = L.map('map');
 // basemaps that serve a page opened as a local file (OpenStreetMap's own tile servers block it):
@@ -119,9 +153,45 @@ const bases = {{
 L.control.layers(bases, null, {{position: 'topright'}}).addTo(map);
 const bounds = [];
 for (const p of points) {{
-  L.circleMarker([p.lat, p.lon], {{radius: 8, color: '#222', weight: 1, fillColor: p.color, fillOpacity: 0.9}})
+  p.marker = L.circleMarker([p.lat, p.lon], {{radius: 8, color: '#222', weight: 1, fillColor: p.color, fillOpacity: 0.9}})
     .bindPopup(p.popup, {{maxWidth: 420}}).bindTooltip(p.label).addTo(map);
   bounds.push([p.lat, p.lon]);
+}}
+// the filter: the cameras with any of the checked tags are shown (a dashed outline if only uncertain);
+// the others are dimmed, or hidden
+const filter = L.control({{position: 'topleft'}});
+filter.onAdd = () => {{
+  const d = L.DomUtil.create('div', 'filter');
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({{'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}})[c]);
+  d.innerHTML = '<b>Show cameras with</b><br>' + tags.map(t =>
+      `<label class="${{t.yes + t.uncertain ? '' : 'zero'}}"><input type="checkbox" data-tag="${{t.key}}"> ` +
+      `${{esc(t.label)}}<span class="n">${{t.yes}}${{t.uncertain ? ' + ' + t.uncertain + '?' : ''}}</span></label>`).join('') +
+    '<hr><label><input type="checkbox" id="f-uncertain" checked> include uncertain (?)</label>' +
+    '<label><input type="checkbox" id="f-hide"> hide the other cameras</label>';
+  L.DomEvent.disableClickPropagation(d);
+  L.DomEvent.disableScrollPropagation(d);
+  d.addEventListener('change', update);
+  return d;
+}};
+filter.addTo(map);
+function update() {{
+  const checked = [...document.querySelectorAll('.filter input[data-tag]:checked')].map(i => i.dataset.tag);
+  const uncertain = document.getElementById('f-uncertain').checked;
+  const hide = document.getElementById('f-hide').checked;
+  for (const p of points) {{
+    const states = checked.map(k => p.tags[k]).filter(s => s === 'yes' || (uncertain && s === 'uncertain'));
+    const match = !checked.length || states.length > 0;
+    const sure = !checked.length || states.includes('yes');
+    if (match) {{
+      p.marker.setStyle({{opacity: 1, fillOpacity: 0.9, weight: sure ? 1 : 2, dashArray: sure ? null : '3 2'}});
+      p.marker.setRadius(8);
+    }} else {{
+      p.marker.setStyle({{opacity: 0.35, fillOpacity: 0.15, weight: 1, dashArray: null}});
+      p.marker.setRadius(5);
+    }}
+    if (match || !hide) {{ if (!map.hasLayer(p.marker)) p.marker.addTo(map); }} else p.marker.remove();
+    if (match && checked.length && map.hasLayer(p.marker)) p.marker.bringToFront();
+  }}
 }}
 if (epi) {{ L.marker(epi).bindPopup({json.dumps(title)}).addTo(map); bounds.push(epi); }}
 if (bounds.length > 1) map.fitBounds(bounds, {{padding: [40, 40]}}); else map.setView(bounds[0] || [34, -118], 10);
