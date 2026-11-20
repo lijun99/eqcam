@@ -67,13 +67,16 @@ def write_table(rows, event, out):
     fields = ['camera_id', 'name', 'lat', 'lon', 'distance_km', 'priority', 'flags', 'shaking_detected', 'onset_s',
               'strong_duration_s', 'shake_amplitude_px', 'peak_image_velocity_px_s', 'permanent_shift_px',
               'changed_fraction_after', 'changed_fraction_latest', 'reviewed_by', 'model', 'review_error',
-              'severity', 'confidence', 'camera_status', 'shaking_visible', 'intensity_mmi', *DETECTIONS, 'summary']
+              'severity', 'confidence', 'camera_status', 'shaking_visible', 'intensity_mmi', *DETECTIONS, 'summary',
+              'video_start_s', 'video_end_s', 'video_window', 'video_url']
     with open(os.path.join(out, 'survey.csv'), 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(fields)
         for r in rows:
             fd, rec = r['findings'], r['record'] or {}
-            vals = dict(r, flags='; '.join(r.get('flags', [])), reviewed_by=rec.get('reviewed_by'),
+            win = video_window(r) or (None, None, None)
+            vals = dict(r, video_start_s=win[0], video_end_s=win[1], video_window=win[2],
+                        flags='; '.join(r.get('flags', [])), reviewed_by=rec.get('reviewed_by'),
                         model=rec.get('model'), review_error=rec.get('error'), confidence=fd.get('confidence'),
                         camera_status=fd.get('camera_status'), summary=fd.get('summary'),
                         shaking_visible=(fd.get('shaking') or {}).get('visible'),
@@ -82,6 +85,39 @@ def write_table(rows, event, out):
             w.writerow(['' if vals.get(k) is None else vals[k] for k in fields])
     with open(os.path.join(out, 'survey.json'), 'w') as f:
         json.dump(dict(event=event, cameras=rows), f, indent=1)
+
+
+FRAME_LABELS = {'before': 'BEFORE', 'peak': 'PEAK', 'after': 'AFTER', 'latest': 'LATEST'}
+
+
+def video_window(r):
+    """The part of the video that covers the detections, (start, end, what) in s of the video: the window set by
+    the reviewer (video_window_s in the record), else the detected shaking, else the predicted arrivals"""
+    rec, dur = r.get('record') or {}, r.get('duration_s')
+    clip = lambda a, b: (max(0.0, round(a, 1)), round(b if dur is None else min(b, dur), 1))  # noqa: E731
+    w = rec.get('video_window_s')
+    if isinstance(w, (list, tuple)) and len(w) == 2 and all(isinstance(x, (int, float)) for x in w) and w[1] > w[0]:
+        return (*clip(*w), 'set by the review')
+    if r.get('shaking_detected') and r.get('onset_s') is not None and r.get('end_s') is not None:
+        return (*clip(r['onset_s'] - 5, r['end_s'] + 5), 'detected shaking')
+    if r.get('predicted_p_s') is not None and r.get('predicted_s_s') is not None:
+        return (*clip(r['predicted_p_s'] - 5, r['predicted_s_s'] + 30), 'predicted P and S arrivals')
+    return None
+
+
+def video_links(r):
+    """Links to the video online (video_url; none without it), opened at the window of the detections and at
+    the times of the frames (media fragments #t=start,end)"""
+    e, src = html.escape, r.get('video_url')
+    if not src:
+        return ''
+    w = video_window(r)
+    frames = {k: v['video_time_s'] for k, v in (r.get('frames') or {}).items() if k in FRAME_LABELS}
+    a = lambda frag, text: f'<a href="{e(src)}#t={frag}" target="_blank">{e(text)}</a>'  # noqa: E731
+    parts = [a(f'{w[0]:g},{w[1]:g}', f'{w[0]:g}-{w[1]:g} s') + f' ({e(w[2])})'] if w else []
+    parts += [a(f'{frames[k]:g}', f'{FRAME_LABELS[k]} {frames[k]:g} s') for k in FRAME_LABELS if k in frames]
+    parts.append(f'<a href="{e(src)}" target="_blank">whole video</a>')
+    return 'Video: ' + ' &middot; '.join(parts)
 
 
 def popup(r):
@@ -106,6 +142,8 @@ def popup(r):
     else:
         lines.append('<i>not reviewed</i>')
     lines.append(f"<small>{e(r.get('motion_text', ''))}</small>")
+    if links := video_links(r):
+        lines.append(links)
     if r.get('tile'):
         lines.append(f"<a href=\"{e(r['tile'])}\" target=\"_blank\"><img src=\"{e(r['tile'])}\" width=\"380\"></a>")
     return '<br>'.join(lines)

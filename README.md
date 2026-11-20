@@ -76,6 +76,7 @@ the Claude Code skill](#testing-with-the-claude-code-skill), or run `eqcam revie
 | `lat`, `lon` | location |
 | `video` | path, relative to `--videos` |
 | `start_utc` | optional: ISO time of the first frame; with the event, the shaking is searched near the predicted P and S arrivals |
+| `video_url` | optional: the video online; the map links to it (never to the local file) |
 
 `event.json`: `event_id`, `origin_utc`, `lat`, `lon`, `depth_km`, `magnitude`, `place` (only `event_id` required).
 
@@ -151,12 +152,18 @@ backend. If `eqcam` is not installed in the environment, the skill runs it from 
 - `cameras/<id>/`: `tile.jpg`, the full frames, `motion.png`, `motion.npz`
 - `metrics.json`, `tasks.json`: the motion and flags per camera, and the review tasks (high priority first)
 - `findings/<stage>/<id>.json`: `{camera_id, stage, reviewed_by, model, reviewed_at, latency_s, usage, error,
-  findings}`
+  findings}`, and optionally `video_window_s: [start, end]` (s of the video) set by the reviewer
 - `survey.csv`, `survey.json`, `map.html`, `map.png`
 
 `map.html` opens from the disk in a browser (it needs internet for the basemap and Leaflet). Its basemaps are
 USGS The National Map (Topo and Imagery; US only; the default for US events) and CARTO Light (worldwide). It does
 not use OpenStreetMap's own tile servers, which block pages opened as local files.
+
+A panel on the map filters the cameras by what was seen: shaking, each detection of the schema, and cameras
+dark, frozen or without video (any checked tag; uncertain ones with a dashed outline; the others dimmed or
+hidden). Each popup links the video online (`video_url`; no link without it) opened at the part that covers the
+detections (`#t=start,end`: the `video_window_s` of the review record if set, else the detected shaking, else the
+predicted P and S arrivals) and at the times of the frames; `survey.csv` has the same window.
 
 ## Notes
 

@@ -31,7 +31,7 @@ RANK = {'high': 0, 'normal': 1, 'low': 2}
 
 def read_cameras(path):
     """The list of cameras and their videos: camera_id, name, lat, lon, video, and optionally start_utc
-    (ISO time of the first frame) and view (what the camera looks at)"""
+    (ISO time of the first frame), view (what the camera looks at) and video_url (the video online, for the map)"""
     with open(path, newline='') as f:
         rows = [{k.strip(): (v or '').strip() for k, v in row.items() if k} for row in csv.DictReader(f)]
     for row in rows:
@@ -247,6 +247,8 @@ def prepare_camera(cam, videos, outdir, event, motion_fps=15.0, motion_width=320
              view=cam.get('view', ''), flags=[])
     if event and event.get('lat') is not None and cam.get('lat') is not None:
         m['distance_km'] = round(distance_km(event['lat'], event['lon'], cam['lat'], cam['lon']), 1)
+    if cam.get('video_url'):
+        m['video_url'] = cam['video_url']
     video = os.path.join(videos, cam['video']) if cam.get('video') else ''
     if not video or not os.path.exists(video):
         m['flags'].append('no_video')

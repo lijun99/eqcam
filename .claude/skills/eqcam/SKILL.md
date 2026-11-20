@@ -12,8 +12,9 @@ ffprobe; the API backends also need `pip install "eqcam[claude]"` or `"eqcam[gem
 ## 0. Inputs
 
 - **videos.csv**: one row per camera: `camera_id, name, lat, lon, video` (path relative to the videos folder),
-  and optionally `start_utc` (ISO time of the first frame) and `view` (what the camera looks at). With
-  `start_utc` and the event, the shaking is searched near the predicted arrivals.
+  and optionally `start_utc` (ISO time of the first frame), `view` (what the camera looks at) and `video_url`
+  (the video online, linked from the map). With `start_utc` and the event, the shaking is searched near the
+  predicted arrivals.
 - **event.json**: `event_id, origin_utc, lat, lon, depth_km, magnitude, place` (only `event_id` required).
 - If the server's list has another layout, write a small conversion to this CSV. Never modify the videos.
 
@@ -57,6 +58,8 @@ high priority first:
     "reviewed_at": "<UTC ISO time>", "latency_s": null, "usage": {}, "error": null,
     "findings": { ...FINDINGS_SCHEMA... }}
    ```
+   Add `"video_window_s": [start, end]` (s of the video) when you located what you saw (the shaking or an
+   effect) more precisely than `motion_text`; the map links the video at that window.
 3. Hold to the instructions: compare BEFORE with AFTER and LATEST; report only what is visible; "uncertain"
    rather than a guess; common false alarms (fog, low sun, lens flare, rain on the lens, steam, traffic dust,
    motion blur, a camera that panned); intensity only from visible effects; people only as counts and actions.
@@ -76,8 +79,9 @@ and fix every problem it lists.
 eqcam report --out runs/<id>
 ```
 
-It writes `survey.csv`, `survey.json`, `map.html` (open it in a browser; markers colored by severity, the tile in
-each popup) and `map.png`. Tell the user:
+It writes `survey.csv`, `survey.json`, `map.html` (open it in a browser; markers colored by severity, a panel to
+filter the cameras by tag, and in each popup the tile and links to the video online, `video_url`, at the window
+of the detections) and `map.png`. Tell the user:
 
 - the counts by severity, and every camera of severity 2 or 3: what was detected, where, the confidence, and
   the path of its tile;

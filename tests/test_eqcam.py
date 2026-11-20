@@ -241,3 +241,18 @@ def test_map_tags():
     assert report.tags({'findings': fd, 'flags': []}) == {'shaking': 'yes', 'fire': 'uncertain'}
     assert report.tags({'findings': {}, 'flags': ['no_video']}) == {'camera_problem': 'yes'}
     assert report.tags({'findings': {'camera_status': 'dark'}}) == {'camera_problem': 'yes'}
+
+
+def test_video_window_and_links():
+    """The window of the video: set by the review, else the detected shaking, else the predicted arrivals"""
+    r = dict(video='/data/videos/cam1.mp4', duration_s=60.0, predicted_p_s=3.0, predicted_s_s=6.0, shaking_detected=False,
+             frames={'before': {'video_time_s': 1.5}}, record={})
+    assert report.video_window(r) == (0.0, 36.0, 'predicted P and S arrivals')
+    r.update(shaking_detected=True, onset_s=8.0, end_s=58.0)
+    assert report.video_window(r) == (3.0, 60.0, 'detected shaking')
+    r['record'] = {'video_window_s': [10, 20]}
+    assert report.video_window(r) == (10, 20, 'set by the review')
+    links = report.video_links(dict(r, video_url='https://example.org/v.mp4'))
+    assert 'https://example.org/v.mp4#t=10,20' in links and '#t=1.5"' in links and 'BEFORE 1.5 s' in links
+    assert 'cam1.mp4' not in links                       # never the local file
+    assert report.video_links(r) == ''
