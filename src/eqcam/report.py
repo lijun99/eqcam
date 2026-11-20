@@ -10,6 +10,7 @@ import os
 import matplotlib
 import numpy as np
 
+from .frames import motion_items
 from .review import load_record
 from .schema import DETECTIONS, SEVERITY_NAMES
 
@@ -68,6 +69,7 @@ def write_table(rows, event, out):
               'strong_duration_s', 'shake_amplitude_px', 'peak_image_velocity_px_s', 'permanent_shift_px',
               'changed_fraction_after', 'changed_fraction_latest', 'reviewed_by', 'model', 'review_error',
               'severity', 'confidence', 'camera_status', 'shaking_visible', 'intensity_mmi', *DETECTIONS, 'summary',
+              'motion_brief',
               'video_start_s', 'video_end_s', 'video_window', 'video_url']
     with open(os.path.join(out, 'survey.csv'), 'w', newline='') as f:
         w = csv.writer(f)
@@ -75,7 +77,8 @@ def write_table(rows, event, out):
         for r in rows:
             fd, rec = r['findings'], r['record'] or {}
             win = video_window(r) or (None, None, None)
-            vals = dict(r, video_start_s=win[0], video_end_s=win[1], video_window=win[2],
+            vals = dict(r, motion_brief='; '.join(items_of(r)),
+                        video_start_s=win[0], video_end_s=win[1], video_window=win[2],
                         flags='; '.join(r.get('flags', [])), reviewed_by=rec.get('reviewed_by'),
                         model=rec.get('model'), review_error=rec.get('error'), confidence=fd.get('confidence'),
                         camera_status=fd.get('camera_status'), summary=fd.get('summary'),
@@ -120,33 +123,50 @@ def video_links(r):
     return 'Video: ' + ' &middot; '.join(parts)
 
 
+def items_of(r):
+    """The motion of a camera in short statements (computed for runs prepared before they were saved)"""
+    return r.get('motion_items') or (motion_items(r) if 'flags' in r else [])
+
+
 def popup(r):
+    """The popup of a camera: the verdict and its summary, short statements of what the review saw and of the
+    motion of the video, the links to the video, the details (folded) and the tile"""
     e = html.escape
     fd, rec = r['findings'], r['record'] or {}
-    lines = [f"<b>{e(r['camera_id'])}</b> {e(r.get('name') or '')}"]
+    ul = lambda items: '<ul>' + ''.join(f'<li>{e(i)}</li>' for i in items) + '</ul>' if items else ''  # noqa: E731
+    parts = [f"<b>{e(r['camera_id'])}</b> {e(r.get('name') or '')}"]
+    details = []
     if fd:
-        lines.append(f"<i>{e(NAMES.get(fd.get('severity')))}</i> ({e(str(fd.get('confidence')))} confidence, "
-                     f"{e(str(rec.get('reviewed_by')))} {e(str(rec.get('model') or ''))}): {e(fd.get('summary', ''))}")
+        parts.append(f"<br><i>{e(NAMES.get(fd.get('severity')))}</i>, {e(str(fd.get('confidence')))} confidence"
+                     f"<br>{e(fd.get('summary', ''))}")
+        shaking, seen = fd.get('shaking') or {}, []
+        if shaking.get('visible') in ('yes', 'uncertain'):
+            seen.append(f"Shaking: {shaking['visible']}"
+                        + (f", MMI {shaking['intensity_mmi']}" if shaking.get('intensity_mmi') else ''))
+            details.append(f"<b>Shaking</b>: {e('; '.join(shaking.get('effects') or []))} {e(shaking.get('basis', ''))}")
         for key in DETECTIONS:
             item = fd.get(key) or {}
             if item.get('present') in ('yes', 'uncertain'):
-                lines.append(f"{e(key.replace('_', ' '))}: {e(item['present'])}. {e(item.get('description', ''))} "
-                             f"{e(item.get('where', ''))}")
-        shaking = fd.get('shaking') or {}
-        if shaking.get('visible') in ('yes', 'uncertain'):
-            lines.append(f"shaking: {e(shaking['visible'])}. {e('; '.join(shaking.get('effects') or []))}")
-        if shaking.get('intensity_mmi'):
-            lines.append(f"Intensity (MMI) {e(shaking['intensity_mmi'])}: {e(shaking.get('basis', ''))}")
+                label = TAG_LABELS.get(key, key.replace('_', ' '))
+                seen.append(f"{label}: {item['present']}")
+                details.append(f"<b>{e(label)}</b>: {e(item.get('description', ''))} {e(item.get('where', ''))}")
+        parts.append('<div class="h">Review</div>' + (ul(seen) or '<ul><li>nothing detected</li></ul>'))
+        details.append(f"<b>Reviewed by</b> {e(str(rec.get('reviewed_by')))} {e(str(rec.get('model') or ''))}")
     elif rec.get('error'):
-        lines.append(f"<i>review failed: {e(rec['error'])}</i>")
+        parts.append(f"<br><i>review failed: {e(rec['error'])}</i>")
     else:
-        lines.append('<i>not reviewed</i>')
-    lines.append(f"<small>{e(r.get('motion_text', ''))}</small>")
+        parts.append('<br><i>not reviewed</i>')
+    if items := items_of(r):
+        parts.append('<div class="h">Video motion</div>' + ul(items))
+    if r.get('motion_text'):
+        details.append(f"<b>Video motion</b>: {e(r['motion_text'])}")
     if links := video_links(r):
-        lines.append(links)
+        parts.append(f'<div>{links}</div>')
+    if details:
+        parts.append('<details><summary>Details</summary>' + '<br>'.join(details) + '</details>')
     if r.get('tile'):
-        lines.append(f"<a href=\"{e(r['tile'])}\" target=\"_blank\"><img src=\"{e(r['tile'])}\" width=\"380\"></a>")
-    return '<br>'.join(lines)
+        parts.append(f"<a href=\"{e(r['tile'])}\" target=\"_blank\"><img src=\"{e(r['tile'])}\" width=\"380\"></a>")
+    return '<div class="pop">' + ''.join(parts) + '</div>'
 
 
 def title_of(event):
@@ -171,7 +191,10 @@ def map_html(rows, event, out):
 .legend span{{display:inline-block;width:10px;height:10px;border-radius:5px;margin-right:6px}}
 .filter{{background:#fff;padding:6px 10px;font:12px sans-serif;line-height:1.6;max-height:70vh;overflow:auto}}
 .filter label{{display:block;cursor:pointer;white-space:nowrap}} .filter .zero{{color:#999}}
-.filter .n{{color:#555;margin-left:4px}} .filter hr{{margin:4px 0;border:0;border-top:1px solid #ddd}}</style>
+.filter .n{{color:#555;margin-left:4px}} .filter hr{{margin:4px 0;border:0;border-top:1px solid #ddd}}
+.pop{{font:12px/1.4 sans-serif}} .pop .h{{margin-top:6px;font-weight:bold;color:#444}}
+.pop ul{{margin:2px 0 4px;padding-left:18px}} .pop li{{margin:0}}
+.pop details{{margin:4px 0;color:#333}} .pop summary{{cursor:pointer;color:#1a5fb4}} .pop img{{margin-top:4px}}</style>
 </head><body><div id="map"></div><script>
 const points = {json.dumps(points)};
 const tags = {json.dumps(tag_list)};

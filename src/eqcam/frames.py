@@ -362,6 +362,46 @@ def plot_motion(t, d, sh, shift_px, scale, marks, title, out):
     plt.close(fig)
 
 
+def motion_items(m):
+    """The motion of a camera in short statements, for the map and the console"""
+    flags = set(m.get('flags', []))
+    if 'no_video' in flags:
+        return ['No video']
+    if any(f.startswith('error') for f in flags):
+        return ['Video could not be processed']
+    items = []
+    if m.get('shaking_detected'):
+        items.append(f"Shaking {m['onset_s']:.1f}-{m['end_s']:.1f} s ({m['strong_duration_s']:.0f} s), "
+                     f"up to {m['shake_amplitude_px']:g} px")
+    elif 'shaking_detected' in m:
+        items.append('No shaking detected')
+    if 'shaking_until_a_view_change' in flags:
+        items.append('Shaking lasts until the view changes')
+    elif 'shaking_until_the_end_of_the_clip' in flags:
+        items.append('Shaking lasts until the end of the video')
+    if m.get('view_changes_s'):
+        n = len(m['view_changes_s'])
+        items.append(f"Camera pans or switches views {n} time{'s' if n > 1 else ''} (not shaking)")
+    for a, _ in (m.get('sudden_changes_s') or [])[:3]:
+        items.append(f'Sudden change of the scene at {a:g} s')
+    if 'camera_moved' in flags:
+        items.append(f"Camera shifted {m.get('permanent_shift_px')} px by the shaking")
+    if 'scene_changed' in flags:
+        pct = 100 * max(m.get('changed_fraction_after', 0), m.get('changed_fraction_latest', 0))
+        items.append(f'Scene changed: {pct:.0f} % of the image')
+    if 'latest_in_another_view' in flags:
+        items.append('Latest frame shows another view')
+    if 'dark_at_the_end' in flags:
+        items.append('Dark at the end (possible outage)')
+    if 'frozen_at_the_end' in flags:
+        items.append('Frozen at the end (possible outage)')
+    if 'predicted_arrivals_outside_the_video' in flags:
+        items.append('Predicted arrivals outside the video')
+    if 'too_short' in flags:
+        items.append('Video too short')
+    return items
+
+
 def motion_text(m):
     """The motion of a camera in words, for the review"""
     if 'no_video' in m['flags']:
@@ -569,8 +609,9 @@ def prepare(cameras_csv, videos, out, event_json=None, only=None, **options):
             m = dict(camera_id=cam['camera_id'], name=cam.get('name', ''), lat=cam.get('lat'), lon=cam.get('lon'),
                      view=cam.get('view', ''), flags=[f'error: {type(err).__name__}: {err}'], priority='high')
         m['motion_text'] = motion_text(m)
+        m['motion_items'] = motion_items(m)
         metrics.append(m)
-        print(f"{m['camera_id']:>20s}  {m['priority']:6s}  {m['motion_text']}")
+        print(f"{m['camera_id']:>20s}  {m['priority']:6s}  {'; '.join(m['motion_items'])}")
     with open(os.path.join(out, 'metrics.json'), 'w') as f:
         json.dump(metrics, f, indent=1)
     keys = ('camera_id', 'name', 'view', 'distance_km', 'priority', 'tile', 'frames', 'motion_plot', 'motion_text')

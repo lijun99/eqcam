@@ -308,3 +308,16 @@ def test_video_window_and_links():
     assert 'https://example.org/v.mp4#t=10,20' in links and '#t=1.5"' in links and 'BEFORE 1.5 s' in links
     assert 'cam1.mp4' not in links                       # never the local file
     assert report.video_links(r) == ''
+
+
+def test_motion_items():
+    """The motion in short statements"""
+    m = dict(flags=['view_changes (3)', 'scene_changed', 'dark_at_the_end'], shaking_detected=True, onset_s=7.0,
+             end_s=25.4, strong_duration_s=18.4, shake_amplitude_px=6.0, view_changes_s=[[5, 6], [25, 26], [45, 46]],
+             changed_fraction_after=0.042)
+    items = frames.motion_items(m)
+    assert items[0] == 'Shaking 7.0-25.4 s (18 s), up to 6 px'
+    assert 'Camera pans or switches views 3 times (not shaking)' in items
+    assert 'Scene changed: 4 % of the image' in items and 'Dark at the end (possible outage)' in items
+    assert frames.motion_items(dict(flags=['no_video'])) == ['No video']
+    assert frames.motion_items(dict(flags=[], shaking_detected=False)) == ['No shaking detected']
