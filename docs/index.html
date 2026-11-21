@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eqcam</title>
+<meta name="description" content="Rapid survey of public and traffic camera videos after an earthquake with vision-language models.">
+<style>
+:root { --bg:#fff; --fg:#1d2330; --muted:#5f6878; --line:#e3e6eb; --link:#1a5fb4; --card:#f7f8fa; }
+@media (prefers-color-scheme: dark) { :root { --bg:#14171c; --fg:#e6e9ee; --muted:#9aa3b2; --line:#2a2f37; --link:#8cb4ff; --card:#1c2027; } }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 system-ui, -apple-system, Segoe UI, sans-serif; }
+main { max-width:820px; margin:0 auto; padding:32px 16px 48px; }
+h1 { font-size:26px; margin:0 0 4px; } h2 { font-size:17px; margin:28px 0 8px; }
+p { margin:6px 0; } a { color:var(--link); } .muted { color:var(--muted); }
+.cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(230px, 1fr)); gap:12px; margin-top:12px; }
+.card { display:block; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 14px;
+        text-decoration:none; color:var(--fg); }
+.card:hover { border-color:var(--link); }
+.card b { color:var(--link); } .card span { display:block; color:var(--muted); font-size:14px; margin-top:2px; }
+img { max-width:100%; height:auto; border:1px solid var(--line); border-radius:6px; }
+ul { padding-left:20px; } li { margin:4px 0; }
+footer { font-size:13px; color:var(--muted); margin-top:32px; padding-top:12px; border-top:1px solid var(--line); }
+</style></head><body><main>
+<h1>eqcam</h1>
+<p class="muted">Rapid survey of public and traffic camera videos after an earthquake with vision-language models.</p>
+
+<div class="cards">
+  <a class="card" href="demo/map.html"><b>Demo map</b><span>A made-up M6.8 event with synthetic videos and
+    made-up findings of every severity: the filter by tag, the popups, the tiles.</span></a>
+  <a class="card" href="https://lijun99.github.io/eqcam_events/"><b>Event surveys</b><span>Real events surveyed
+    with eqcam: survey maps, vibration maps, tables.</span></a>
+  <a class="card" href="https://github.com/lijun99/eqcam"><b>Source and documentation</b><span>The code, the
+    README (install, inputs, backends, outputs) and the Claude Code skill.</span></a>
+</div>
+
+<h2>What it does</h2>
+<ul>
+  <li><b>prepare</b>: finds when the shaking reaches each camera (its vibration, within one view, not the camera
+    panning or switching views), picks the frames before, during and after, and flags cameras that go dark,
+    freeze, move, or whose mount resonates.</li>
+  <li><b>review</b>: a vision-language model (Claude, Gemini or Qwen) looks at each camera's frames for damage,
+    landslides, ground failure, fire, smoke, outages, water and people's response, and estimates the shaking
+    intensity (MMI) from the visible effects; it also boxes the people, who are blurred before anything is
+    published.</li>
+  <li><b>report</b>: a table and a map, the cameras colored by severity, with the video linked at the moment of
+    the detections; optionally (<code>--vibration</code>) the vibration of each camera and of the objects in its
+    view: displacement, spectra, spectrogram.</li>
+</ul>
+
+<p><a href="demo/map.html"><img src="demo/map.png" alt="The map of the demo event: cameras around Los Angeles colored by severity"></a></p>
+
+<footer>Research prototype. The findings are automated and unverified, and the image motion of a camera is not a
+measurement of the ground shaking; nothing here is an official earthquake product or meant for emergency
+decisions.</footer>
+</main></body></html>

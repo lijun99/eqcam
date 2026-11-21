@@ -67,8 +67,14 @@ possible liquefaction, a possible fire, shaking only, nothing). It writes `runs/
 ![Map of the demo event](docs/demo/map.png)
 
 The interactive map, with a basemap and popups with each camera's findings and tile:
-**<https://lijun99.github.io/eqcam/demo/map.html>** (served by GitHub Pages from `docs/`). The findings are not from a model; to test a model, see [Testing with
-the Claude Code skill](#testing-with-the-claude-code-skill), or run `eqcam review` on the demo with a backend.
+**<https://lijun99.github.io/eqcam/demo/map.html>**. The findings are not from a model; to test a model, see
+[Testing with the Claude Code skill](#testing-with-the-claude-code-skill), or run `eqcam review` on the demo with
+a backend.
+
+GitHub Pages serves `docs/`: the start page **<https://lijun99.github.io/eqcam/>** (`docs/index.html`) links the
+demo map, the event surveys (<https://lijun99.github.io/eqcam_events/>) and this repository. After a change to
+the maps, refresh the demo: `python examples/demo.py --out <folder>`, then copy its `run/map.html`, `map.png`,
+`survey.csv` and `cameras/*/tile.jpg` to `docs/demo/`.
 
 ## Inputs
 
