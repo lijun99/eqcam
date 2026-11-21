@@ -436,7 +436,7 @@ const map = L.map('map');
 {BASEMAPS_JS}{PANEL_JS}const bounds = [];
 for (const p of points) {{
   L.circleMarker([p.lat, p.lon], {{radius: 8, color: '#222', weight: 1, fillColor: p.color, fillOpacity: 0.9}})
-    .bindPopup(p.popup, {{maxWidth: Math.min(480, window.innerWidth - 60)}}).bindTooltip(p.label).addTo(map);
+    .bindPopup(p.popup, popupOptions(480)).bindTooltip(p.label).addTo(map);
   bounds.push([p.lat, p.lon]);
 }}
 if (epi) {{ L.marker(epi).bindPopup({json.dumps(title)}).addTo(map); bounds.push(epi); }}

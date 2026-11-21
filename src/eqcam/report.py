@@ -40,7 +40,8 @@ L.control.layers(bases, null, {position: 'topright'}).addTo(map);
 # the panels of the maps (filter, legend, information): a header (.ph) that folds the body (.pb); folded at first
 # on phones (narrow or touch screens), so that they do not hide the map
 PANEL_CSS = r""".ph{cursor:pointer;font-weight:bold;user-select:none} .ph::after{content:' \25BE'}
-.closed .ph::after{content:' \25B8'} .closed .pb{display:none}"""
+.closed .ph::after{content:' \25B8'} .closed .pb{display:none}
+body.popup-open .filter, body.popup-open .legend, body.popup-open .box{display:none}"""
 PANEL_JS = r"""const small = window.matchMedia('(max-width: 768px), (pointer: coarse)').matches;
 function foldable(d, open) {
   d.querySelector('.ph').addEventListener('click', () => d.classList.toggle('closed'));
@@ -49,6 +50,20 @@ function foldable(d, open) {
   L.DomEvent.disableScrollPropagation(d);
   return d;
 }
+// the popups: no taller than most of the screen (they scroll inside), the map panned to show them from their
+// beginning, again when their images load or a pull-down opens; the panels hidden while one is open
+const popupOptions = w => ({maxWidth: Math.min(w, window.innerWidth - 60),
+  maxHeight: Math.round(window.innerHeight * 0.75), autoPanPadding: [12, 12]});
+map.on('popupopen', e => {
+  document.body.classList.add('popup-open');
+  const el = e.popup.getElement();
+  const top = () => { const c = el.querySelector('.leaflet-popup-content'); if (c) c.scrollTop = 0; };
+  const again = () => { e.popup.update(); top(); };
+  top();
+  el.querySelectorAll('img').forEach(img => { if (!img.complete) img.addEventListener('load', again, {once: true}); });
+  el.querySelectorAll('details').forEach(d => d.addEventListener('toggle', () => e.popup.update()));
+});
+map.on('popupclose', () => document.body.classList.remove('popup-open'));
 """
 FIT_JS = r"""if (bounds.length > 1) map.fitBounds(bounds, {padding: [40, 40]}); else map.setView(bounds[0] || [34, -118], 10);
 // The National Map where it has coverage (the conterminous US, Alaska, Hawaii, Puerto Rico), CARTO elsewhere
@@ -250,7 +265,7 @@ const map = L.map('map');
 {BASEMAPS_JS}{PANEL_JS}const bounds = [];
 for (const p of points) {{
   p.marker = L.circleMarker([p.lat, p.lon], {{radius: 8, color: '#222', weight: 1, fillColor: p.color, fillOpacity: 0.9}})
-    .bindPopup(p.popup, {{maxWidth: Math.min(420, window.innerWidth - 60)}}).bindTooltip(p.label).addTo(map);
+    .bindPopup(p.popup, popupOptions(420)).bindTooltip(p.label).addTo(map);
   bounds.push([p.lat, p.lon]);
 }}
 // the filter: the cameras with any of the checked tags are shown (a dashed outline if only uncertain);
