@@ -233,7 +233,7 @@ def main_direction(x):
 
 def style(ax):
     ax.grid(color=GRID, lw=0.6)
-    ax.tick_params(labelsize=8, colors=INK2)
+    ax.tick_params(labelsize=12, colors=INK2)
     for side in ('top', 'right'):
         ax.spines[side].set_visible(False)
     for side in ('left', 'bottom'):
@@ -241,13 +241,14 @@ def style(ax):
 
 
 def plot_camera(out, m, summary, t, cam_hp, fr, cam_psd, objects, obj_series, fps, onset, scale, path):
-    fig = plt.figure(figsize=(12, 10.5), constrained_layout=True)
+    fig = plt.figure(figsize=(13, 13), constrained_layout=True)
     gs = GridSpec(3, 2, figure=fig)
     on, end = m['onset_s'], m['end_s']
     title = f"{m['camera_id']} {m.get('name', '')}, {m.get('distance_km', '?')} km"
     fig.suptitle(f'{title}: vibration of the camera and of the objects in its view\n'
-                 'px: pixels of the full frame; their size depends on the zoom, the distance and the mount: compare '
-                 'frequencies and shapes across cameras, not amplitudes', fontsize=10, color=INK, x=0.01, ha='left')
+                 'px: pixels of the full frame; their size depends on the zoom, the distance and the mount:\n'
+                 'compare frequencies and shapes across cameras, not amplitudes', fontsize=15, color=INK, x=0.01,
+                 ha='left')
 
     # the frame with the objects
     ax = fig.add_subplot(gs[0, 0])
@@ -259,7 +260,7 @@ def plot_camera(out, m, summary, t, cam_hp, fr, cam_psd, objects, obj_series, fp
         x0, y0, x1, y1 = o['box']
         color = SERIES[(o['id'] - 1) % len(SERIES)]
         ax.add_patch(plt.Rectangle((x0, y0), x1 - x0, y1 - y0, fill=False, ec=color, lw=2))
-        ax.text(x0 + 4, y0 + 4, str(o['id']), color=INK, fontsize=9, va='top',
+        ax.text(x0 + 4, y0 + 4, str(o['id']), color=INK, fontsize=13, va='top',
                 bbox=dict(boxstyle='round,pad=0.15', fc='white', ec=color, lw=1))
     ax.set_xlim(0, m['width'])
     ax.set_ylim(m['height'], 0)
@@ -267,18 +268,18 @@ def plot_camera(out, m, summary, t, cam_hp, fr, cam_psd, objects, obj_series, fp
     n_obj = len(summary['objects'])
     ax.set_title(f'{n_obj} object{"s" if n_obj != 1 else ""} vibrating on {"their" if n_obj != 1 else "its"} own'
                  + (f' (the {len(objects)} strongest outlined)' if n_obj > len(objects) else '')
-                 + (f'; set aside: {summary["overlays"]} overlay, {summary["set_aside"]} other patches'
+                 + (f'\nset aside: {summary["overlays"]} overlay, {summary["set_aside"]} other patches'
                     if summary['overlays'] or summary['set_aside'] else ''),
-                 fontsize=9, color=INK2, loc='left')
+                 fontsize=13, color=INK2, loc='left')
 
     # the camera: displacement and spectrum
     ax = fig.add_subplot(gs[0, 1])
     ax.axvspan(on, end, color=GRID, alpha=0.6, lw=0)
     ax.plot(t, cam_hp[:, 0], color=SERIES[0], lw=1, label='across')
     ax.plot(t, cam_hp[:, 1], color=SERIES[1], lw=1, label='down')
-    ax.legend(frameon=False, fontsize=8, loc='upper right')
-    ax.set_ylabel('camera displacement, px', fontsize=9, color=INK2)
-    ax.set_xlabel('time in the video, s (shaded: the shaking detected)', fontsize=8, color=INK2)
+    ax.legend(frameon=False, fontsize=12, loc='upper right')
+    ax.set_ylabel('camera displacement, px', fontsize=13, color=INK2)
+    ax.set_xlabel('time in the video, s (shaded: the shaking)', fontsize=13, color=INK2)
     style(ax)
     ax = fig.add_subplot(gs[1, 0])
     band = fr > 0
@@ -289,10 +290,12 @@ def plot_camera(out, m, summary, t, cam_hp, fr, cam_psd, objects, obj_series, fp
         ax.axvline(cam['frequency_hz'], color=INK2, lw=0.8, ls=':')
         label = f"{cam['frequency_hz']:g} Hz, {100 * cam['concentration']:.0f} % of the power near it"
         if mount.get('resonant'):
-            label += f"; resonant mount, rings {mount.get('ring_s')} s"
-        ax.text(0.98, 0.95, label, transform=ax.transAxes, ha='right', va='top', fontsize=8, color=INK)
-    ax.set_xlabel('frequency, Hz', fontsize=9, color=INK2)
-    ax.set_ylabel('camera power, px² / Hz', fontsize=9, color=INK2)
+            label += f"\nresonant mount, rings {mount.get('ring_s')} s"
+        right = cam['frequency_hz'] < 0.5 * fr[band].max()          # the label on the side away from the peak
+        ax.text(0.98 if right else 0.02, 0.97, label, transform=ax.transAxes, ha='right' if right else 'left',
+                va='top', fontsize=12, color=INK, bbox=dict(boxstyle='round,pad=0.2', fc='white', ec='none', alpha=0.85))
+    ax.set_xlabel('frequency, Hz', fontsize=13, color=INK2)
+    ax.set_ylabel('camera power, px² / Hz', fontsize=13, color=INK2)
     style(ax)
     ax = fig.add_subplot(gs[1, 1])
     x = main_direction(cam_hp)
@@ -301,9 +304,9 @@ def plot_camera(out, m, summary, t, cam_hp, fr, cam_psd, objects, obj_series, fp
         f_s, t_s, sxx = signal.spectrogram(x, fps, nperseg=nper, noverlap=int(0.85 * nper))
         db = 10 * np.log10(np.maximum(sxx, 1e-12))
         ax.pcolormesh(t[0] + t_s, f_s, db, cmap='Blues', vmin=np.percentile(db, 50), vmax=db.max(), shading='auto')
-    ax.set_ylabel('frequency, Hz', fontsize=9, color=INK2)
-    ax.set_xlabel('time in the video, s', fontsize=8, color=INK2)
-    ax.set_title('camera: spectrogram (darker: more power)', fontsize=9, color=INK2, loc='left')
+    ax.set_ylabel('frequency, Hz', fontsize=13, color=INK2)
+    ax.set_xlabel('time in the video, s', fontsize=13, color=INK2)
+    ax.set_title('camera: spectrogram (darker: more power)', fontsize=13, color=INK2, loc='left')
     style(ax)
 
     # the objects: displacement relative to the camera, and spectra
@@ -317,20 +320,22 @@ def plot_camera(out, m, summary, t, cam_hp, fr, cam_psd, objects, obj_series, fp
             p = np.asarray(o['psd'])
             ax2.semilogy(fr[band], np.maximum(p[band] / max(p[band].max(), 1e-12), 1e-6), color=color, lw=1.2,
                          label=f"object {o['id']}: {o['frequency_hz']} Hz")
-        ax.legend(frameon=False, fontsize=8, loc='upper right')
-        ax2.legend(frameon=False, fontsize=8, loc='upper right')
+        ax.legend(frameon=False, fontsize=12, loc='upper right')
+        ax2.legend(frameon=False, fontsize=12, loc='upper right')
     else:
         for a in (ax, ax2):
-            a.text(0.5, 0.5, 'no object vibrating on its own above its level before the shaking',
-                   transform=a.transAxes, ha='center', va='center', fontsize=9, color=INK2)
-            a.set_xticks([])
-            a.set_yticks([])
-    ax.set_ylabel('object displacement relative to the camera, px', fontsize=9, color=INK2)
-    ax.set_xlabel('time in the video, s', fontsize=8, color=INK2)
-    ax2.set_xlabel('frequency, Hz', fontsize=9, color=INK2)
-    ax2.set_ylabel('object power, normalized', fontsize=9, color=INK2)
-    style(ax)
-    style(ax2)
+            a.text(0.5, 0.5, 'no object vibrating on its own\nabove its level before the shaking',
+                   transform=a.transAxes, ha='center', va='center', fontsize=13, color=INK2)
+    if objects:
+        ax.set_ylabel('object, relative to the camera, px', fontsize=13, color=INK2)
+        ax.set_xlabel('time in the video, s', fontsize=13, color=INK2)
+        ax2.set_xlabel('frequency, Hz', fontsize=13, color=INK2)
+        ax2.set_ylabel('object power, normalized', fontsize=13, color=INK2)
+        style(ax)
+        style(ax2)
+    else:
+        ax.axis('off')
+        ax2.axis('off')
     fig.savefig(path, dpi=100, facecolor='white')
     plt.close(fig)
 
@@ -346,7 +351,7 @@ def summary_png(rows, event, out):
     """The dominant frequencies of the cameras and their objects against the distance, and the spectra of the
     cameras (normalized)"""
     done = [r for r in rows if r.get('vibration')]
-    fig, (a1, a2) = plt.subplots(1, 2, figsize=(12, 4.6), constrained_layout=True)
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(13, 5.6), constrained_layout=True)
     for r in done:
         v, d = r['vibration'], r.get('distance_km')
         if d is None:
@@ -355,7 +360,7 @@ def summary_png(rows, event, out):
             a1.scatter(d, v['camera']['frequency_hz'], s=60, color=CLASS_COLORS[class_of(r)], ec='white', lw=1.5,
                        zorder=3)
             a1.annotate(r['camera_id'], (d, v['camera']['frequency_hz']), xytext=(6, 4), textcoords='offset points',
-                        fontsize=8, color=INK)
+                        fontsize=12, color=INK)
         for o in v['objects']:
             if o['frequency_hz']:
                 a1.scatter(d, o['frequency_hz'], s=22, marker='D', color=SERIES[2], ec='white', lw=1, zorder=2)
@@ -363,10 +368,10 @@ def summary_png(rows, event, out):
         a1.scatter([], [], s=60, color=CLASS_COLORS[name], label=f'camera: {name}')
     if any(r['vibration']['objects'] for r in done):
         a1.scatter([], [], s=22, marker='D', color=SERIES[2], label='object in a view')
-    a1.legend(frameon=False, fontsize=8, loc='upper right')
-    a1.set_xlabel('distance from the epicenter, km', fontsize=9, color=INK2)
-    a1.set_ylabel('dominant frequency, Hz', fontsize=9, color=INK2)
-    a1.set_title('dominant frequency of the cameras and of the objects', fontsize=9, color=INK2, loc='left')
+    a1.legend(frameon=False, fontsize=12, loc='upper right')
+    a1.set_xlabel('distance from the epicenter, km', fontsize=13, color=INK2)
+    a1.set_ylabel('dominant frequency, Hz', fontsize=13, color=INK2)
+    a1.set_title('dominant frequency of the cameras and objects', fontsize=13, color=INK2, loc='left')
     style(a1)
     for i, r in enumerate(sorted(done, key=lambda r: r.get('distance_km') or 0)):
         v = r['vibration']
@@ -375,12 +380,12 @@ def summary_png(rows, event, out):
         color = SERIES[i] if i < len(SERIES) else MUTED
         a2.semilogy(fr[band], np.maximum(p[band] / max(p[band].max(), 1e-12), 1e-6), color=color, lw=1.2,
                     label=f"{r['camera_id']} ({r.get('distance_km')} km)" if i < len(SERIES) else None)
-    a2.legend(frameon=False, fontsize=8, loc='upper right')
-    a2.set_xlabel('frequency, Hz', fontsize=9, color=INK2)
-    a2.set_ylabel('camera power, normalized', fontsize=9, color=INK2)
-    a2.set_title('spectra of the camera motion', fontsize=9, color=INK2, loc='left')
+    a2.legend(frameon=False, fontsize=12, loc='upper right')
+    a2.set_xlabel('frequency, Hz', fontsize=13, color=INK2)
+    a2.set_ylabel('camera power, normalized', fontsize=13, color=INK2)
+    a2.set_title('spectra of the camera motion', fontsize=13, color=INK2, loc='left')
     style(a2)
-    fig.suptitle(f'{title_of(event)}: vibration', fontsize=10, color=INK, x=0.01, ha='left')
+    fig.suptitle(f'{title_of(event)}: vibration', fontsize=14, color=INK, x=0.01, ha='left')
     fig.savefig(os.path.join(out, 'vibration_summary.png'), dpi=100, facecolor='white')
     plt.close(fig)
 
