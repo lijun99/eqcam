@@ -415,12 +415,14 @@ def map_html(rows, event, out):
     title = html.escape(title_of(event) + ': vibration')
     legend = ''.join(f'<div><span style="background:{c}"></span>{html.escape(k)}</div>' for k, c in CLASS_COLORS.items())
     page = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>{title}</title>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>html,body,#map{{height:100%;margin:0}} .box{{background:#fff;padding:6px 8px;font:12px sans-serif;color:{INK}}}
 .box span{{display:inline-block;width:10px;height:10px;border-radius:5px;margin-right:6px}}
-.leaflet-popup-content{{font:12px/1.45 sans-serif}}</style>
+.leaflet-popup-content{{font:12px/1.45 sans-serif}} .leaflet-popup-content img{{max-width:100%;height:auto}}
+@media (max-width:600px){{.box,.leaflet-popup-content{{font-size:14px}} .box img{{width:150px}}}}</style>
 </head><body><div id="map"></div><script>
 const points = {json.dumps(points)};
 const epi = {json.dumps(epi)};
@@ -428,7 +430,7 @@ const map = L.map('map');
 {BASEMAPS_JS}const bounds = [];
 for (const p of points) {{
   L.circleMarker([p.lat, p.lon], {{radius: 8, color: '#222', weight: 1, fillColor: p.color, fillOpacity: 0.9}})
-    .bindPopup(p.popup, {{maxWidth: 480}}).bindTooltip(p.label).addTo(map);
+    .bindPopup(p.popup, {{maxWidth: Math.min(480, window.innerWidth - 60)}}).bindTooltip(p.label).addTo(map);
   bounds.push([p.lat, p.lon]);
 }}
 if (epi) {{ L.marker(epi).bindPopup({json.dumps(title)}).addTo(map); bounds.push(epi); }}

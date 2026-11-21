@@ -214,7 +214,8 @@ def map_html(rows, event, out):
     legend = ''.join(f'<div><span style="background:{COLORS[k]}"></span>{html.escape(v)}</div>'
                      for k, v in NAMES.items())
     page = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>{title}</title>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>html,body,#map{{height:100%;margin:0}} .legend{{background:#fff;padding:6px 8px;font:12px sans-serif}}
@@ -224,7 +225,11 @@ def map_html(rows, event, out):
 .filter .n{{color:#555;margin-left:4px}} .filter hr{{margin:4px 0;border:0;border-top:1px solid #ddd}}
 .pop{{font:12px/1.4 sans-serif}} .pop .h{{margin-top:6px;font-weight:bold;color:#444}}
 .pop ul{{margin:2px 0 4px;padding-left:18px}} .pop li{{margin:0}}
-.pop details{{margin:4px 0;color:#333}} .pop summary{{cursor:pointer;color:#1a5fb4}} .pop img{{margin-top:4px}}</style>
+.pop details{{margin:4px 0;color:#333}} .pop summary{{cursor:pointer;color:#1a5fb4}} .pop img{{margin-top:4px}}
+.leaflet-popup-content img{{max-width:100%;height:auto}}
+.filter .ft{{cursor:pointer}} .filter .ft::after{{content:' \25BE'}} .filter.closed .ft::after{{content:' \25B8'}}
+.filter.closed .fb{{display:none}}
+@media (max-width:600px){{.pop,.filter,.legend{{font-size:14px}} .filter{{max-height:45vh}}}}</style>
 </head><body><div id="map"></div><script>
 const points = {json.dumps(points)};
 const tags = {json.dumps(tag_list)};
@@ -233,7 +238,7 @@ const map = L.map('map');
 {BASEMAPS_JS}const bounds = [];
 for (const p of points) {{
   p.marker = L.circleMarker([p.lat, p.lon], {{radius: 8, color: '#222', weight: 1, fillColor: p.color, fillOpacity: 0.9}})
-    .bindPopup(p.popup, {{maxWidth: 420}}).bindTooltip(p.label).addTo(map);
+    .bindPopup(p.popup, {{maxWidth: Math.min(420, window.innerWidth - 60)}}).bindTooltip(p.label).addTo(map);
   bounds.push([p.lat, p.lon]);
 }}
 // the filter: the cameras with any of the checked tags are shown (a dashed outline if only uncertain);
@@ -242,11 +247,13 @@ const filter = L.control({{position: 'topleft'}});
 filter.onAdd = () => {{
   const d = L.DomUtil.create('div', 'filter');
   const esc = s => String(s).replace(/[&<>"]/g, c => ({{'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}})[c]);
-  d.innerHTML = '<b>Show cameras with</b><br>' + tags.map(t =>
+  d.innerHTML = '<b class="ft">Show cameras with</b><div class="fb">' + tags.map(t =>
       `<label class="${{t.yes + t.uncertain ? '' : 'zero'}}"><input type="checkbox" data-tag="${{t.key}}"> ` +
       `${{esc(t.label)}}<span class="n">${{t.yes}}${{t.uncertain ? ' + ' + t.uncertain + '?' : ''}}</span></label>`).join('') +
     '<hr><label><input type="checkbox" id="f-uncertain" checked> include uncertain (?)</label>' +
-    '<label><input type="checkbox" id="f-hide"> hide the other cameras</label>';
+    '<label><input type="checkbox" id="f-hide"> hide the other cameras</label></div>';
+  d.querySelector('.ft').addEventListener('click', () => d.classList.toggle('closed'));
+  if (window.innerWidth < 600) d.classList.add('closed');               // phones: open it with a tap
   L.DomEvent.disableClickPropagation(d);
   L.DomEvent.disableScrollPropagation(d);
   d.addEventListener('change', update);
