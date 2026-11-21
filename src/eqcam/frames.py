@@ -22,7 +22,7 @@ import subprocess
 import matplotlib
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from scipy import fft, ndimage
+from scipy import fft, ndimage, signal
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt                     # noqa: E402
@@ -68,6 +68,17 @@ def probe(video):
     info = json.loads(out)
     s = info['streams'][0]
     return int(s['width']), int(s['height']), float(info['format'].get('duration', 'nan'))
+
+
+def video_fps(video):
+    """The frame rate of a video (30 if unknown)"""
+    out = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=avg_frame_rate',
+                          '-of', 'default=noprint_wrappers=1:nokey=1', video], capture_output=True, text=True).stdout
+    try:
+        num, den = out.strip().split('/')
+        return float(num) / float(den) if float(den) else 30.0
+    except ValueError:
+        return 30.0
 
 
 def decode_small(video, width, height, fps, start=0.0, duration=None):
@@ -272,6 +283,60 @@ def matches(q, shift, q_typical, width, loose=True):
     return bool((loose and q >= 0.5 * q_typical and d <= 0.1 * width) or (q >= 0.1 * q_typical and d <= 4))
 
 
+RESONANCE_CONCENTRATION = 0.5   # a resonant mount: at least this fraction of the motion near one frequency,
+RESONANCE_DAMPING = 0.05        # damped by less than this fraction of critical,
+RESONANCE_CYCLES = 5            # and ringing for this many cycles (e-folding time of the envelope x frequency);
+LONG_RING_S = 10.0              # or ringing longer than this, at any spread of frequencies (a structure's modes)
+
+
+def mount_response(shifts, fps, onset, max_step=32.0):
+    """The response of the camera's mount, from the image shift (n x 2, px) in one view, the shaking starting
+    at frame onset: the dominant frequency, the fraction of the motion near it, the ring-down (e-folding time of
+    the envelope, s) and the damping it implies. A camera on a loose or tall mount (a pole, a mast, a bracket)
+    rings at its own frequency, lightly damped, long after the ground calms down: its image motion shows the
+    mount more than the ground. A broadband, quickly damped motion is closer to the ground shaking. None if the
+    series is too short or the shifts are not reliable (a jump of more than max_step px between frames)"""
+    n = len(shifts)
+    if n < 4 * fps or onset < 2 or n - onset < 3 * fps or not np.isfinite(shifts).all():
+        return None
+    if np.abs(np.diff(shifts, axis=0)).max() > max_step:                # the correlation jumped
+        return None
+    x = signal.detrend(shifts - np.median(shifts[:onset], axis=0), axis=0)
+    seg = x[onset:]
+    fr, p = signal.welch(seg, fps, nperseg=min(len(seg), int(8 * fps)), axis=0)
+    p = p.sum(axis=1)
+    band = (fr >= 0.5) & (fr <= 0.4 * fps)                             # below 80 % of the Nyquist frequency
+    if not band.any() or p[band].sum() <= 0:
+        return None
+    k = int(np.flatnonzero(band)[np.argmax(p[band])])
+    f0 = float(fr[k])
+    near = band & (np.abs(fr - f0) <= max(0.25, 0.1 * f0))
+    concentration = float(p[near].sum() / p[band].sum())
+    # the envelope of the motion near f0 (along its main direction), smoothed over 1 s; the ring-down from its
+    # peak until it stays below twice its level before the shaking for 1 s (or the end of the view)
+    u = np.linalg.svd(seg - seg.mean(0), full_matrices=False)[2][0]
+    b_, a_ = signal.butter(2, [max(0.3, 0.7 * f0), min(0.45 * fps, 1.3 * f0)], btype='band', fs=fps)
+    env = np.abs(signal.hilbert(signal.filtfilt(b_, a_, x @ u)))
+    env = ndimage.uniform_filter1d(env, max(1, int(round(fps))))
+    noise = float(np.median(env[:onset])) + 1e-6
+    ip = onset + int(np.argmax(env[onset:]))
+    quiet = [ra for ra, rb in runs(env[ip:] < 2 * noise) if rb - ra >= fps or ip + rb == len(env) and rb - ra >= fps / 2]
+    below = quiet[:1]
+    stop = ip + (int(below[0]) if below else len(env) - ip)
+    ring_s = damping = None
+    if stop - ip >= max(3, int(0.5 * fps)):
+        slope = np.polyfit(np.arange(stop - ip) / fps, np.log(env[ip:stop]), 1)[0]
+        if slope < 0:
+            ring_s = float(-1 / slope)
+            damping = float(-slope / (2 * np.pi * f0))
+    resonant = bool(ring_s is not None and (ring_s >= LONG_RING_S or (
+        concentration >= RESONANCE_CONCENTRATION and damping <= RESONANCE_DAMPING and ring_s * f0 >= RESONANCE_CYCLES)))
+    return dict(frequency_hz=round(f0, 2), concentration=round(concentration, 2),
+                ring_s=None if ring_s is None else round(ring_s, 1),
+                damping=None if damping is None else round(damping, 3),
+                ringing_to_end=bool(not len(below)), resonant=resonant)
+
+
 def same_view(frames, ref, segments, after, q_typical):
     """The last frame after frame after in the same view as frame ref: the end of the last stable view whose
     frames match it; (frame, shift) or (None, None)"""
@@ -381,6 +446,13 @@ def motion_items(m):
                      f"up to {m['shake_amplitude_px']:g} px")
     elif 'shaking_detected' in m:
         items.append('No shaking detected')
+    if mount := m.get('mount'):
+        if mount['resonant']:
+            more = '+' if mount['ringing_to_end'] else ''
+            items.append(f"Mount resonance: {mount['frequency_hz']:g} Hz, rings {mount['ring_s']:g}{more} s "
+                         f"(motion overstates the shaking)")
+        else:
+            items.append('No mount resonance: motion closer to the ground shaking')
     if 'shaking_until_a_view_change' in flags:
         items.append('Shaking lasts until the view changes')
     elif 'shaking_until_the_end_of_the_clip' in flags:
@@ -408,6 +480,19 @@ def motion_items(m):
     return items
 
 
+def mount_text(mount):
+    """The response of the mount in words"""
+    ring = (f"ringing {mount['ring_s']} s{' or more' if mount['ringing_to_end'] else ''}"
+            if mount.get('ring_s') is not None else 'no clear ring-down')
+    damping = f", damping about {100 * mount['damping']:.1f} %" if mount.get('damping') is not None else ''
+    near = f"{mount['frequency_hz']} Hz ({100 * mount['concentration']:.0f} % of the motion near it)"
+    if mount['resonant']:
+        return (f"The camera's mount resonates: dominant {near}, {ring}{damping}. The image motion shows the mount "
+                f"(pole, mast or building) more than the ground shaking; do not take its size as the intensity.")
+    return (f"The image motion is not a mount resonance: dominant {near}, {ring}{damping}; it is closer to the "
+            f"ground shaking, though its size still depends on the mount and the zoom.")
+
+
 def motion_text(m):
     """The motion of a camera in words, for the review"""
     if 'no_video' in m['flags']:
@@ -429,6 +514,8 @@ def motion_text(m):
                      f"permanent shift {m['permanent_shift_px']} px.")
     elif 'shaking_detected' in m:
         parts.append('No shaking detected in the video.')
+    if mount := m.get('mount'):
+        parts.append(mount_text(mount))
     for key in ('changed_fraction_after', 'changed_fraction_latest'):
         if key in m:
             parts.append(f"Image changed between BEFORE and {key.rsplit('_', 1)[1].upper()}: "
@@ -529,6 +616,17 @@ def prepare_camera(cam, videos, outdir, event, motion_fps=15.0, motion_width=320
         if permanent and permanent > 3:
             m['flags'].append('camera_moved')
         picks.update(peak=peak, after=after_i)
+        # the mount: the window of the shaking and its ring-down, in its view, at the frame rate of the video
+        fps_v = min(30.0, video_fps(video))
+        ta, tb = max(float(t[a]), float(t[onset]) - 2), min(float(t[b - 1]), float(t[end]) + 15)
+        fr = decode_small(video, motion_width, h_small, fps_v, ta, tb - ta)
+        if len(fr) > 4 * fps_v:
+            mount = mount_response(image_shifts(fr, 0), fps_v, int(round((float(t[onset]) - ta) * fps_v)),
+                                   max_step=0.1 * motion_width)
+            if mount:
+                m['mount'] = mount
+                if mount['resonant']:
+                    m['flags'].append('resonant_mount')
 
     # the latest frame in the same view as BEFORE (cameras that tour their views come back to it)
     last = picks['after'] if picks['after'] is not None else ref

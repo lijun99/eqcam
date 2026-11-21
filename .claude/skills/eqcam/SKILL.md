@@ -27,7 +27,9 @@ eqcam prepare --cameras videos.csv --videos <folder> --event event.json --out ru
 It writes, per camera, `cameras/<id>/tile.jpg` (BEFORE, PEAK SHAKING, AFTER, LATEST or LATE SHAKING, labeled),
 the full frames, `motion.png`, and `metrics.json` and `tasks.json` (high priority first). Report the counts by
 priority and the flags (no_video, dark_at_the_end, frozen_at_the_end, camera_moved, scene_changed,
-view_changes, latest_in_another_view, shaking_until_a_view_change). Cameras that pan or tour their preset views
+view_changes, latest_in_another_view, shaking_until_a_view_change, resonant_mount). A `resonant_mount` camera
+rings at its mount's own frequency (a pole, a mast, the building): its image motion overstates the ground
+shaking, so do not compare image motion across cameras as intensity. Cameras that pan or tour their preset views
 are split into stable views: the shaking is searched only within a view (the image jittering back and forth, not
 drifting), and BEFORE, PEAK and AFTER are in that view; `motion_text` lists the view changes and any sudden
 change of the scene in the same view.
@@ -98,3 +100,4 @@ links to the video online, `video_url`, at the window of the detections) and `ma
   the path of its tile;
 - the cameras that went dark or froze (possible power or network outages) and those without video;
 - that the findings are automated and unverified: a person should look at the tiles before anyone acts on them.
+

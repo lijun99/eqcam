@@ -360,3 +360,25 @@ def test_mask_people(prepared, tmp_path):
         json.dump(rec, f)
     mask.mask_run(out)
     assert np.abs(np.asarray(Image.open(tile_path).convert('L'), float) - tile0).mean() < 1
+
+
+def test_mount_response():
+    """A lightly damped ringing at one frequency is a resonant mount; a short broadband burst is not; jumps are
+    not measured"""
+    fps, onset = 30.0, 60
+    t = np.arange(int(30 * fps)) / fps
+    rng = np.random.default_rng(0)
+    after = np.clip(t - onset / fps, 0, None) * (t >= onset / fps)
+    ring = 2.0 * np.exp(-0.01 * 2 * np.pi * 4 * after) * np.sin(2 * np.pi * 4 * after)        # 4 Hz, 1 % damping
+    shifts = np.stack([ring, 0.3 * ring], 1) + rng.normal(0, 0.005, (len(t), 2))
+    m = frames.mount_response(shifts, fps, onset)
+    assert m['resonant'] and abs(m['frequency_hz'] - 4) < 0.2 and 2.5 < m['ring_s'] < 6 and m['concentration'] > 0.7
+    burst = rng.normal(0, 1, (len(t), 2)) * np.exp(-0.5 * ((t - 4) / 0.7) ** 2)[:, None]      # broadband, 1-2 s
+    m = frames.mount_response(burst + rng.normal(0, 0.005, (len(t), 2)), fps, onset)
+    assert not m['resonant'] and m['concentration'] < 0.5
+    jump = shifts.copy()
+    jump[300:] += 50
+    assert frames.mount_response(jump, fps, onset) is None
+    assert 'resonates' in frames.mount_text(dict(frequency_hz=4.0, concentration=0.9, ring_s=4.0, damping=0.01,
+                                                 ringing_to_end=False, resonant=True))
+

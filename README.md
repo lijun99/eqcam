@@ -18,7 +18,8 @@ The result is a table and a map, with a severity (0-3), a confidence and a one-l
 videos.csv + videos + event.json
   -> eqcam prepare   motion of each video (image shifts by phase correlation): the stable views between the
                      camera panning, zooming or switching views; the shaking (the image jittering back and forth
-                     within a view): onset, peak, end; frames BEFORE / PEAK SHAKING / AFTER / LATEST in the
+                     within a view): onset, peak, end; whether the camera's mount resonates (dominant
+                     frequency, ring-down, damping); frames BEFORE / PEAK SHAKING / AFTER / LATEST in the
                      same view, in a labeled 2 x 2 tile; flags (no video, dark or frozen at the end, camera
                      moved, scene changed, view changes, latest in another view)
   -> eqcam review    one request per camera (the tile and the motion in words) to a backend, in parallel;
@@ -157,6 +158,15 @@ backend. If `eqcam` is not installed in the environment, the skill runs it from 
 - `findings/<stage>/<id>.json`: `{camera_id, stage, reviewed_by, model, reviewed_at, latency_s, usage, error,
   findings}`, and optionally `video_window_s: [start, end]` (s of the video) set by the reviewer
 - `survey.csv`, `survey.json`, `map.html`, `map.png`
+
+**The image motion is not the ground motion.** It is the ground motion filtered by the camera's mount (a pole, a
+mast, a bracket, the building) and scaled by the zoom. `eqcam prepare` re-decodes the shaking and its ring-down
+at the frame rate of the video and measures the dominant frequency, the fraction of the motion near it, the
+ring-down (e-folding time of the envelope) and the damping. A narrow peak, lightly damped (5 % or less) and
+ringing 5 cycles or more, or any motion ringing 10 s or more, is flagged `resonant_mount`: the image motion shows
+the mount more than the ground (e.g., a Caltrans pole ringing at 5 Hz for 9 s or more after an M4.2 at 7 km). A
+broadband, quickly damped motion is closer to the ground shaking. The review estimates the intensity only from
+visible effects in any case.
 
 **People are blurred** before the frames are published or shared: the review returns `people_boxes` (a box around
 every person or group, 0-1000 of the tile) with its findings, at no extra cost, and `eqcam report` pixelates and
