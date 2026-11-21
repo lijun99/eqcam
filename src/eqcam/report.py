@@ -22,6 +22,29 @@ from matplotlib.ticker import MaxNLocator           # noqa: E402
 COLORS = {0: '#8a8f98', 1: '#e3b505', 2: '#f08a24', 3: '#d62728', None: '#4a6fa5'}
 NAMES = {**SEVERITY_NAMES, None: 'not reviewed'}
 
+# the basemaps of the maps (after `const map = L.map(...)`), and the view fitted to `bounds` with the basemap
+# chosen by where it is
+BASEMAPS_JS = r"""// basemaps that serve a page opened as a local file (OpenStreetMap's own tile servers block it):
+// The National Map (USGS, public domain, United States only) and CARTO (worldwide, OpenStreetMap data)
+const usgs = 'https://basemap.nationalmap.gov/arcgis/rest/services/';
+const nationalMap = 'Basemap: <a href="https://www.usgs.gov/programs/national-geospatial-program/national-map">USGS The National Map</a>';
+const bases = {
+  'USGS Topo': L.tileLayer(usgs + 'USGSTopo/MapServer/tile/{z}/{y}/{x}', {maxZoom: 16, attribution: nationalMap}),
+  'USGS Imagery': L.tileLayer(usgs + 'USGSImageryTopo/MapServer/tile/{z}/{y}/{x}', {maxZoom: 16, attribution: nationalMap}),
+  'CARTO Light (worldwide)': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    {maxZoom: 19, subdomains: 'abcd',
+     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'}),
+};
+L.control.layers(bases, null, {position: 'topright'}).addTo(map);
+"""
+FIT_JS = r"""if (bounds.length > 1) map.fitBounds(bounds, {padding: [40, 40]}); else map.setView(bounds[0] || [34, -118], 10);
+// The National Map where it has coverage (the conterminous US, Alaska, Hawaii, Puerto Rico), CARTO elsewhere
+const c = map.getCenter();
+const inUS = (c.lat > 24 && c.lat < 50 && c.lng > -125 && c.lng < -66) || (c.lat > 51 && c.lat < 72 && c.lng < -129)
+  || (c.lat > 18 && c.lat < 23 && c.lng > -161 && c.lng < -154) || (c.lat > 17.5 && c.lat < 18.6 && c.lng > -68 && c.lng < -65);
+bases[inUS ? 'USGS Topo' : 'CARTO Light (worldwide)'].addTo(map);
+"""
+
 # the tags the cameras can be filtered by on the map: the shaking, every detection, and camera outages
 TAG_LABELS = {'shaking': 'Shaking', 'structural_damage': 'Structural damage',
               'infrastructure_damage': 'Road, bridge or utility damage', 'landslide': 'Landslide or rockfall',
@@ -70,7 +93,7 @@ def write_table(rows, event, out):
               'strong_duration_s', 'shake_amplitude_px', 'peak_image_velocity_px_s', 'permanent_shift_px',
               'changed_fraction_after', 'changed_fraction_latest', 'reviewed_by', 'model', 'review_error',
               'severity', 'confidence', 'camera_status', 'shaking_visible', 'intensity_mmi', *DETECTIONS, 'summary',
-              'motion_brief', 'people_blurred',
+              'motion_brief', 'people_blurred', 'vibration_frequency_hz', 'vibration_objects',
               'video_start_s', 'video_end_s', 'video_window', 'video_url']
     with open(os.path.join(out, 'survey.csv'), 'w', newline='') as f:
         w = csv.writer(f)
@@ -78,7 +101,10 @@ def write_table(rows, event, out):
         for r in rows:
             fd, rec = r['findings'], r['record'] or {}
             win = video_window(r) or (None, None, None)
+            vib = r.get('vibration') or {}
             vals = dict(r, motion_brief='; '.join(items_of(r)),
+                        vibration_frequency_hz=(vib.get('camera') or {}).get('frequency_hz'),
+                        vibration_objects=len(vib['objects']) if vib else None,
                         video_start_s=win[0], video_end_s=win[1], video_window=win[2],
                         flags='; '.join(r.get('flags', [])), reviewed_by=rec.get('reviewed_by'),
                         model=rec.get('model'), review_error=rec.get('error'), confidence=fd.get('confidence'),
@@ -163,6 +189,9 @@ def popup(r):
         details.append(f"<b>Video motion</b>: {e(r['motion_text'])}")
     if links := video_links(r):
         parts.append(f'<div>{links}</div>')
+    if (r.get('vibration') or {}).get('plot'):
+        parts.append(f"<div>Vibration: <a href=\"{e(r['vibration']['plot'])}\" target=\"_blank\">figure</a> &middot; "
+                     f'<a href="vibration.html">map</a></div>')
     if details:
         parts.append('<details><summary>Details</summary>' + '<br>'.join(details) + '</details>')
     if r.get('tile'):
@@ -201,19 +230,7 @@ const points = {json.dumps(points)};
 const tags = {json.dumps(tag_list)};
 const epi = {json.dumps(epi)};
 const map = L.map('map');
-// basemaps that serve a page opened as a local file (OpenStreetMap's own tile servers block it):
-// The National Map (USGS, public domain, United States only) and CARTO (worldwide, OpenStreetMap data)
-const usgs = 'https://basemap.nationalmap.gov/arcgis/rest/services/';
-const nationalMap = 'Basemap: <a href="https://www.usgs.gov/programs/national-geospatial-program/national-map">USGS The National Map</a>';
-const bases = {{
-  'USGS Topo': L.tileLayer(usgs + 'USGSTopo/MapServer/tile/{{z}}/{{y}}/{{x}}', {{maxZoom: 16, attribution: nationalMap}}),
-  'USGS Imagery': L.tileLayer(usgs + 'USGSImageryTopo/MapServer/tile/{{z}}/{{y}}/{{x}}', {{maxZoom: 16, attribution: nationalMap}}),
-  'CARTO Light (worldwide)': L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png',
-    {{maxZoom: 19, subdomains: 'abcd',
-     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'}}),
-}};
-L.control.layers(bases, null, {{position: 'topright'}}).addTo(map);
-const bounds = [];
+{BASEMAPS_JS}const bounds = [];
 for (const p of points) {{
   p.marker = L.circleMarker([p.lat, p.lon], {{radius: 8, color: '#222', weight: 1, fillColor: p.color, fillOpacity: 0.9}})
     .bindPopup(p.popup, {{maxWidth: 420}}).bindTooltip(p.label).addTo(map);
@@ -256,13 +273,7 @@ function update() {{
   }}
 }}
 if (epi) {{ L.marker(epi).bindPopup({json.dumps(title)}).addTo(map); bounds.push(epi); }}
-if (bounds.length > 1) map.fitBounds(bounds, {{padding: [40, 40]}}); else map.setView(bounds[0] || [34, -118], 10);
-// The National Map where it has coverage (the conterminous US, Alaska, Hawaii, Puerto Rico), CARTO elsewhere
-const c = map.getCenter();
-const inUS = (c.lat > 24 && c.lat < 50 && c.lng > -125 && c.lng < -66) || (c.lat > 51 && c.lat < 72 && c.lng < -129)
-  || (c.lat > 18 && c.lat < 23 && c.lng > -161 && c.lng < -154) || (c.lat > 17.5 && c.lat < 18.6 && c.lng > -68 && c.lng < -65);
-bases[inUS ? 'USGS Topo' : 'CARTO Light (worldwide)'].addTo(map);
-const legend = L.control({{position: 'bottomright'}});
+{FIT_JS}const legend = L.control({{position: 'bottomright'}});
 legend.onAdd = () => {{ const d = L.DomUtil.create('div', 'legend'); d.innerHTML = {json.dumps(legend)}; return d; }};
 legend.addTo(map);
 </script></body></html>
@@ -304,15 +315,19 @@ def map_png(rows, event, out):
     plt.close(fig)
 
 
-def report(out, stages=('final', 'review', 'screen'), mask=True):
+def report(out, stages=('final', 'review', 'screen'), mask=True, vibration=False):
     """The table and the maps; first, unless mask is False, the people blurred in the tiles and frames from the
-    boxes of the review (eqcam.mask)"""
+    boxes of the review (eqcam.mask); with vibration, the vibration of the cameras and of the objects in their
+    views, for scientific use (eqcam.vibration: vibration.html, and the figures linked from the map)"""
     with open(os.path.join(out, 'event.json')) as f:
         event = json.load(f)
     blurred = mask_run(out, stages) if mask else {}
     rows = merge(out, stages)
     for r in rows:
         r['people_blurred'] = blurred.get(r['camera_id'])
+    if vibration:
+        from .vibration import vibration as analyze_vibration
+        analyze_vibration(out, rows, event)
     write_table(rows, event, out)
     map_html(rows, event, out)
     map_png(rows, event, out)

@@ -157,7 +157,8 @@ backend. If `eqcam` is not installed in the environment, the skill runs it from 
 - `metrics.json`, `tasks.json`: the motion and flags per camera, and the review tasks (high priority first)
 - `findings/<stage>/<id>.json`: `{camera_id, stage, reviewed_by, model, reviewed_at, latency_s, usage, error,
   findings}`, and optionally `video_window_s: [start, end]` (s of the video) set by the reviewer
-- `survey.csv`, `survey.json`, `map.html`, `map.png`
+- `survey.csv`, `survey.json`, `map.html`, `map.png`; with `--vibration`, `vibration.html`, `vibration_summary.png`
+  and per camera `vibration.png`, `vibration.json`, `vibration.npz`
 
 **The image motion is not the ground motion.** It is the ground motion filtered by the camera's mount (a pole, a
 mast, a bracket, the building) and scaled by the zoom. `eqcam prepare` re-decodes the shaking and its ring-down
@@ -167,6 +168,19 @@ ringing 5 cycles or more, or any motion ringing 10 s or more, is flagged `resona
 the mount more than the ground (e.g., a Caltrans pole ringing at 5 Hz for 9 s or more after an M4.2 at 7 km). A
 broadband, quickly damped motion is closer to the ground shaking. The review estimates the intensity only from
 visible effects in any case.
+
+**Vibration (optional, for scientific use).** `eqcam report --out runs/E --vibration` (or `eqcam run ...
+--vibration`) also analyzes the vibration of each camera with shaking and of the objects in its view: the shaking
+and its ring-down are decoded again at the frame rate of the video, 640 px wide; a grid of patches is tracked, an
+affine motion of the camera (shift, roll, scale, shear: the shear takes a rolling shutter) is fitted to them, and
+what is left in a patch is the motion of what it shows. A patch that oscillates on its own during the shaking (well
+above its level before, with a spectral peak, not coherent with the camera's motion, tracked without jumps: not
+traffic) is a vibrating object. It writes, per camera, `vibration.png` (the frame with the objects outlined; the
+displacement of the camera against time, its spectrum and spectrogram; the displacement and spectra of the
+objects), `vibration.json` and `vibration.npz` (the series), and `vibration.html` (a map of the cameras by their
+vibration, the figures in the popups) and `vibration_summary.png` (the dominant frequencies against the distance,
+the spectra of the cameras); `map.html` links them. Displacements are in pixels: compare frequencies and shapes
+across cameras, not amplitudes. It adds about 5 s per camera.
 
 **People are blurred** before the frames are published or shared: the review returns `people_boxes` (a box around
 every person or group, 0-1000 of the tile) with its findings, at no extra cost, and `eqcam report` pixelates and

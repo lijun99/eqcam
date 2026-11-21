@@ -16,7 +16,7 @@ import pytest
 from PIL import Image
 from scipy import ndimage
 
-from eqcam import backends, frames, mask, report, review, schema
+from eqcam import backends, frames, mask, report, review, schema, vibration
 
 FPS, H, W = 30, 360, 640
 
@@ -382,3 +382,38 @@ def test_mount_response():
     assert 'resonates' in frames.mount_text(dict(frequency_hz=4.0, concentration=0.9, ring_s=4.0, damping=0.01,
                                                  ringing_to_end=False, resonant=True))
 
+
+def test_vibration_finds_an_object(tmp_path):
+    """A camera ringing at 5 Hz, and an object in its view swinging on its own at 2.2 Hz: the camera's frequency,
+    and the object, where it is and at its frequency; nothing else"""
+    rng = np.random.default_rng(5)
+    scene = ndimage.gaussian_filter(rng.uniform(0, 255, (H + 40, W + 40)), 2)
+    scene = (255 * (scene - scene.min()) / np.ptp(scene)).astype(np.float32)
+    path = str(tmp_path / 'vib.mp4')
+    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'gray', '-s', f'{W}x{H}',
+           '-r', str(FPS), '-i', '-', '-c:v', 'libx264', '-crf', '12', '-pix_fmt', 'yuv420p', path]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    for k in range(int(16 * FPS)):
+        t = k / FPS
+        cam = 1.5 * np.exp(-0.3 * (t - 6)) * np.sin(2 * np.pi * 5 * (t - 6)) if t >= 6 else 0.0
+        obj = 2.0 * np.sin(2 * np.pi * 2.2 * (t - 6)) if 6 <= t < 14 else 0.0
+        img = ndimage.shift(scene, (cam, 0.6 * cam), order=1)[20:20 + H, 20:20 + W]
+        moved = ndimage.shift(scene, (cam + 0.5 * obj, 0.6 * cam + obj), order=1)[20:20 + H, 20:20 + W]
+        img[100:200, 300:420] = moved[100:200, 300:420]                   # the object
+        proc.stdin.write(np.clip(img + rng.normal(0, 1.5, img.shape), 0, 255).astype(np.uint8).tobytes())
+    proc.stdin.close()
+    assert proc.wait() == 0
+    out = str(tmp_path / 'run')
+    os.makedirs(os.path.join(out, 'cameras', 'vib'))
+    m = dict(camera_id='vib', name='synthetic', shaking_detected=True, video=path, onset_s=6.0, end_s=12.0,
+             duration_s=16.0, width=W, height=H, frames={}, view_changes_s=[], distance_km=10.0)
+    v = vibration.analyze_camera(out, m)
+    assert abs(v['camera']['frequency_hz'] - 5) < 0.3
+    assert len(v['objects']) >= 1 and all(abs(o['frequency_hz'] - 2.2) < 0.3 for o in v['objects'])
+    x0, y0, x1, y1 = v['objects'][0]['box']
+    assert x0 < 420 and x1 > 300 and y0 < 200 and y1 > 100                  # where the object is
+    assert os.path.exists(os.path.join(out, v['plot']))
+    rows = [dict(m, lat=34.0, lon=-118.0, vibration=v), dict(camera_id='quiet', lat=34.1, lon=-118.1)]
+    vibration.summary_png(rows, dict(event_id='test', lat=34.05, lon=-118.05), out)
+    vibration.map_html(rows, dict(event_id='test', lat=34.05, lon=-118.05), out)
+    assert os.path.exists(os.path.join(out, 'vibration.html'))

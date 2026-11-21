@@ -101,3 +101,21 @@ links to the video online, `video_url`, at the window of the detections) and `ma
 - the cameras that went dark or froze (possible power or network outages) and those without video;
 - that the findings are automated and unverified: a person should look at the tiles before anyone acts on them.
 
+## 4. Vibration (optional, for scientific use)
+
+Only when the user asks for the vibration, frequencies or displacements of the cameras or of what they see (not
+for the rapid survey: it decodes the videos again, about 5 s per camera):
+
+```bash
+eqcam report --out runs/<id> --vibration
+```
+
+It writes `vibration.html` (the cameras colored by mount resonance; in each popup the figure), and
+`vibration_summary.png` (the dominant frequencies against the distance; the spectra of the cameras), and per
+camera `cameras/<id>/vibration.png` (the frame with the vibrating objects outlined; the camera's displacement
+against time, spectrum and spectrogram; the objects' displacement relative to the camera and spectra),
+`vibration.json` (the numbers) and `vibration.npz` (the series); `map.html` links them. Tell the user, per camera,
+the dominant frequency, whether the mount resonates, the roll, and the objects found (where, at which frequency);
+that displacements are in pixels (they depend on the zoom, the distance and the mount: compare frequencies and
+shapes, not amplitudes); and look at a few `vibration.png` before relying on the objects: a patch that a car,
+a person or a light change crosses can still pass the checks.
