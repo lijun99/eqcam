@@ -39,14 +39,18 @@ FINDINGS_SCHEMA = {
                           'description': 'the state of the camera and its view after the shaking'},
         'shaking': {
             'type': 'object', 'additionalProperties': False,
-            'required': ['visible', 'effects', 'intensity_mmi', 'basis'],
+            'required': ['visible', 'effects', 'intensity_mmi', 'mmi_kind', 'mmi_confidence', 'basis'],
             'properties': {
                 'visible': YNU,
                 'effects': {'type': 'array', 'items': {'type': 'string'},
                             'description': 'visible effects of the shaking: swaying, falling objects, sloshing'},
                 'intensity_mmi': {'type': 'string', 'description': 'a Modified Mercalli Intensity range from the '
-                                  'visible effects, e.g., "V-VI"; empty if they do not constrain it'},
-                'basis': {'type': 'string', 'description': 'the effects the intensity is based on'},
+                                  'visible effects, e.g., "V-VI"; the bound if mmi_kind is "upper bound", e.g., "IV"; '
+                                  'empty if not constrained'},
+                'mmi_kind': {'type': 'string', 'enum': ['estimate', 'upper bound', 'not constrained']},
+                'mmi_confidence': {'type': 'integer', 'description': '0-100'},
+                'basis': {'type': 'string', 'description': 'the effects (or the absence of effects the scene could '
+                          'show) the intensity is based on'},
             }},
         **{key: _detection(what) for key, what in DETECTIONS.items()},
         'severity': {'type': 'integer', 'enum': [0, 1, 2, 3],
@@ -78,9 +82,16 @@ Report only what you can see. Things that often look like smoke or damage but ar
 lens flare, rain or dirt on the lens, steam, traffic dust, motion blur and compression artifacts during the \
 shaking, and a camera that panned or zoomed. A changed view is not damage unless you can see what changed.
 
-Shaking intensity: estimate a Modified Mercalli Intensity range only from visible effects (for example, \
-hanging objects or trees swaying, people running out, objects falling, damage), not from the motion of the \
-image alone, which depends on how the camera is mounted.
+Shaking intensity (Modified Mercalli, MMI), only from visible effects, never from the motion of the image \
+(it depends on the camera's mount and zoom). What a camera can show: II-III little (felt indoors); IV hanging \
+objects (signs, signals, wires) swing, standing vehicles rock; V liquids slosh or spill, small objects move, \
+people outdoors stop or look around; VI people run outdoors or walk unsteadily, trees and bushes visibly shaken, \
+objects fall, windows break; VII hard to stand, drivers stop, plaster, tiles, cornices, parapets or loose bricks \
+fall, weak masonry cracks; VIII chimneys, stacks, towers or tanks fall, weak masonry partly collapses, branches \
+break; IX-X heavy damage or collapse of buildings, ground cracks, broken pipes (damage means less for weak or old \
+buildings). With such effects, give a range (mmi_kind "estimate"). If the scene could show them (people, hanging \
+objects, trees, water) but shows none, give the highest intensity still consistent (mmi_kind "upper bound", e.g., \
+"IV"). Otherwise leave it empty ("not constrained"). mmi_confidence: 0-100.
 
 People: describe only counts and actions (running, gathering, evacuating). Never describe or try to \
 identify individuals. For privacy, also return people_boxes: a box around every person visible in any of the \

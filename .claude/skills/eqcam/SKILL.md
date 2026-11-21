@@ -68,7 +68,9 @@ high priority first:
    effect) more precisely than `motion_text`; the map links the video at that window.
 3. Hold to the instructions: compare BEFORE with AFTER and LATEST; report only what is visible; "uncertain"
    rather than a guess; common false alarms (fog, low sun, lens flare, rain on the lens, steam, traffic dust,
-   motion blur, a camera that panned); intensity only from visible effects; people only as counts and actions.
+   motion blur, a camera that panned); intensity only from visible effects, by the MMI rubric of the
+   instructions (`mmi_kind`: an "estimate" from effects seen; an "upper bound" when the scene could show effects
+   but shows none; else "not constrained"), never from the image motion; people only as counts and actions.
 4. Fill `people_boxes`: a box around every person or close group in any of the four frames, in 0-1000 of the
    whole tile (x from the left, y from the top), close around each person or group (eqcam adds a 10 % margin;
    do not box whole sidewalks, which blurs the scene); include small, distant and partly hidden people

@@ -2,13 +2,14 @@
 
 Rapid survey of camera videos after an earthquake with vision-language models. Given the videos of public or
 traffic cameras recorded around an event (for example, downloaded by a server triggered by ShakeAlert through
-PDL), eqcam finds the shaking in each video, picks the frames before, during and after it, and has a
-vision-language model look for its effects:
+PDL), eqcam finds when the shaking reaches each camera (the camera's vibration), picks the frames before, during
+and after it, and has a vision-language model look for its effects:
 
 - structural damage, infrastructure damage (bridges, roads, poles and wires)
 - landslides and rockfall, ground failure (cracks, liquefaction, surface rupture)
 - fire, smoke or dust, power outages, water (flooding, sloshing, seiche), people's response
-- shaking intensity (a Modified Mercalli range from the visible effects)
+- shaking intensity (a Modified Mercalli range from the visible effects, or an upper bound when the scene could
+  show effects but shows none, with a confidence)
 
 The result is a table and a map, with a severity (0-3), a confidence and a one-line summary per camera.
 
@@ -17,9 +18,10 @@ The result is a table and a map, with a severity (0-3), a confidence and a one-l
 ```
 videos.csv + videos + event.json
   -> eqcam prepare   motion of each video (image shifts by phase correlation): the stable views between the
-                     camera panning, zooming or switching views; the shaking (the image jittering back and forth
-                     within a view): onset, peak, end; whether the camera's mount resonates (dominant
-                     frequency, ring-down, damping); frames BEFORE / PEAK SHAKING / AFTER / LATEST in the
+                     camera panning, zooming or switching views; the camera vibration (the image jittering back
+                     and forth within a view, when the shaking arrives): onset, peak, end; whether the
+                     camera's mount resonates (dominant frequency, ring-down, damping); frames BEFORE /
+                     PEAK SHAKING / AFTER / LATEST in the
                      same view, in a labeled 2 x 2 tile; flags (no video, dark or frozen at the end, camera
                      moved, scene changed, view changes, latest in another view)
   -> eqcam review    one request per camera (the tile and the motion in words) to a backend, in parallel;
@@ -166,8 +168,11 @@ at the frame rate of the video and measures the dominant frequency, the fraction
 ring-down (e-folding time of the envelope) and the damping. A narrow peak, lightly damped (5 % or less) and
 ringing 5 cycles or more, or any motion ringing 10 s or more, is flagged `resonant_mount`: the image motion shows
 the mount more than the ground (e.g., a Caltrans pole ringing at 5 Hz for 9 s or more after an M4.2 at 7 km). A
-broadband, quickly damped motion is closer to the ground shaking. The review estimates the intensity only from
-visible effects in any case.
+broadband, quickly damped motion is closer to the ground shaking. The review estimates the intensity (MMI) only from
+visible effects, by a rubric of what a camera can show at each level: an estimate when it sees such effects, an
+upper bound when the scene could show them (people, hanging objects, trees, water) but shows none, or not
+constrained; with a confidence. The text calls the measured image motion "camera vibration" and keeps
+"shaking" for the ground shaking.
 
 **Vibration (optional, for scientific use).** `eqcam report --out runs/E --vibration` (or `eqcam run ...
 --vibration`) also analyzes the vibration of each camera with shaking and of the objects in its view: the shaking
@@ -195,8 +200,10 @@ not use OpenStreetMap's own tile servers, which block pages opened as local file
 A panel on the map filters the cameras by what was seen: shaking, each detection of the schema, and cameras
 dark, frozen or without video (any checked tag; uncertain ones with a dashed outline; the others dimmed or
 hidden). Each popup links the video online (`video_url`; no link without it) opened at the part that covers the
-detections (`#t=start,end`: the `video_window_s` of the review record if set, else the detected shaking, else the
-predicted P and S arrivals) and at the times of the frames; `survey.csv` has the same window.
+detections (`#t=start,end`: the `video_window_s` of the review record if set, else the camera vibration detected,
+else the predicted P and S arrivals) and at the times of the frames; `survey.csv` has the same window. The panels
+(filter, legend) fold with a tap on their header, and start folded on phones (narrow or touch screens); they hide
+while a popup is open, and popups are kept within the screen, shown from their top.
 
 ## Notes
 
@@ -206,8 +213,10 @@ predicted P and S arrivals) and at the times of the frames; `survey.csv` has the
 - **Privacy.** Frames may show people. The instructions forbid describing or identifying individuals, but the
   frames themselves go to the provider of a cloud backend; use the `qwen` backend on your own server when they
   must not leave it.
-- **The motion is not a seismometer.** The image motion depends on the camera's mount; it is used to find the
-  shaking and pick the frames, and the intensity is estimated only from visible effects.
+- **The motion is not a seismometer.** The camera vibration depends on the camera's mount and zoom (on the event
+  of 2026-11-20, M3.9, the largest image motion, 6 px at LAX, was at one of the lowest ShakeMap intensities,
+  3.0); it is used to find the shaking and pick the frames, and the intensity is estimated only from visible
+  effects.
 - **Status.** The prepare, review and report steps are tested with synthetic videos and stand-ins for the APIs
   (see [Tests and demo](#tests-and-demo)); the backends have not yet been run against the live services, nor
   the pipeline on real earthquake videos.

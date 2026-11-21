@@ -24,7 +24,8 @@ FPS, H, W = 30, 360, 640
 def example_findings(severity=2):
     fd = {key: {'present': 'no', 'description': '', 'where': ''} for key in schema.DETECTIONS}
     fd.update(camera_status='ok', severity=severity, confidence='medium', summary='Smoke after the shaking.',
-              shaking={'visible': 'yes', 'effects': ['poles swaying'], 'intensity_mmi': 'V-VI',
+              shaking={'visible': 'yes', 'effects': ['poles swaying'], 'intensity_mmi': 'V-VI', 'mmi_kind': 'estimate',
+                       'mmi_confidence': 60,
                        'basis': 'poles and wires swaying'})
     fd['smoke_or_dust'] = {'present': 'yes', 'description': 'a plume', 'where': 'upper left, AFTER'}
     fd['people_boxes'] = [{'x_min': 100, 'y_min': 100, 'x_max': 200, 'y_max': 300}]

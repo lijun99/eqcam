@@ -120,7 +120,8 @@ def write_table(rows, event, out):
     fields = ['camera_id', 'name', 'lat', 'lon', 'distance_km', 'priority', 'flags', 'shaking_detected', 'onset_s',
               'strong_duration_s', 'shake_amplitude_px', 'peak_image_velocity_px_s', 'permanent_shift_px',
               'changed_fraction_after', 'changed_fraction_latest', 'reviewed_by', 'model', 'review_error',
-              'severity', 'confidence', 'camera_status', 'shaking_visible', 'intensity_mmi', *DETECTIONS, 'summary',
+              'severity', 'confidence', 'camera_status', 'shaking_visible', 'intensity_mmi',
+              'mmi_kind', 'mmi_confidence', *DETECTIONS, 'summary',
               'motion_brief', 'people_blurred', 'vibration_frequency_hz', 'vibration_objects',
               'video_start_s', 'video_end_s', 'video_window', 'video_url']
     with open(os.path.join(out, 'survey.csv'), 'w', newline='') as f:
@@ -139,6 +140,8 @@ def write_table(rows, event, out):
                         camera_status=fd.get('camera_status'), summary=fd.get('summary'),
                         shaking_visible=(fd.get('shaking') or {}).get('visible'),
                         intensity_mmi=(fd.get('shaking') or {}).get('intensity_mmi'),
+                        mmi_kind=(fd.get('shaking') or {}).get('mmi_kind'),
+                        mmi_confidence=(fd.get('shaking') or {}).get('mmi_confidence'),
                         **{k: (fd.get(k) or {}).get('present') for k in DETECTIONS})
             w.writerow(['' if vals.get(k) is None else vals[k] for k in fields])
     with open(os.path.join(out, 'survey.json'), 'w') as f:
@@ -196,9 +199,14 @@ def popup(r):
                      f"<br>{e(fd.get('summary', ''))}")
         shaking, seen = fd.get('shaking') or {}, []
         if shaking.get('visible') in ('yes', 'uncertain'):
-            seen.append(f"Shaking: {shaking['visible']}"
-                        + (f", MMI {shaking['intensity_mmi']}" if shaking.get('intensity_mmi') else ''))
-            details.append(f"<b>Shaking</b>: {e('; '.join(shaking.get('effects') or []))} {e(shaking.get('basis', ''))}")
+            seen.append(f"Shaking: {shaking['visible']}")
+            details.append(f"<b>Shaking</b>: {e('; '.join(shaking.get('effects') or []))}")
+        if shaking.get('intensity_mmi'):
+            bound = shaking.get('mmi_kind') == 'upper bound'
+            seen.append(f"Intensity: MMI {'≤ ' if bound else ''}{shaking['intensity_mmi']}"
+                        + (f" ({shaking['mmi_confidence']} % confidence)" if shaking.get('mmi_confidence') is not None
+                           else ''))
+            details.append(f"<b>Intensity</b>: {e(shaking.get('basis', ''))}")
         for key in DETECTIONS:
             item = fd.get(key) or {}
             if item.get('present') in ('yes', 'uncertain'):

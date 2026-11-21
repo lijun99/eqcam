@@ -59,7 +59,9 @@ class MadeUp:
                   shaking={'visible': 'yes' if shaken else 'no',
                            'effects': ['lamp posts swaying'] if severity else [],
                            'intensity_mmi': {3: 'VIII', 2: 'VII', 1: 'V-VI', 0: 'III-IV'}[severity],
-                           'basis': 'made up for the demo'})
+                           'mmi_kind': 'estimate', 'mmi_confidence': 70 if severity == 3 else 50,
+                           'basis': 'made up for the demo'},
+                  people_boxes=[])
         return backends.Result(fd, self.model, {'input_tokens': 0, 'output_tokens': 0})
 
 
