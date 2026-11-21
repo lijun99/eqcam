@@ -150,14 +150,14 @@ FRAME_LABELS = {'before': 'BEFORE', 'peak': 'PEAK', 'after': 'AFTER', 'latest': 
 
 def video_window(r):
     """The part of the video that covers the detections, (start, end, what) in s of the video: the window set by
-    the reviewer (video_window_s in the record), else the detected shaking, else the predicted arrivals"""
+    the reviewer (video_window_s in the record), else the camera vibration detected, else the predicted arrivals"""
     rec, dur = r.get('record') or {}, r.get('duration_s')
     clip = lambda a, b: (max(0.0, round(a, 1)), round(b if dur is None else min(b, dur), 1))  # noqa: E731
     w = rec.get('video_window_s')
     if isinstance(w, (list, tuple)) and len(w) == 2 and all(isinstance(x, (int, float)) for x in w) and w[1] > w[0]:
         return (*clip(*w), 'set by the review')
     if r.get('shaking_detected') and r.get('onset_s') is not None and r.get('end_s') is not None:
-        return (*clip(r['onset_s'] - 5, r['end_s'] + 5), 'detected shaking')
+        return (*clip(r['onset_s'] - 5, r['end_s'] + 5), 'camera vibration detected')
     if r.get('predicted_p_s') is not None and r.get('predicted_s_s') is not None:
         return (*clip(r['predicted_p_s'] - 5, r['predicted_s_s'] + 30), 'predicted P and S arrivals')
     return None

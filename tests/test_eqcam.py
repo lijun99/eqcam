@@ -149,7 +149,7 @@ def test_shaking_in_a_touring_camera(tmp_path):
     t = {k: v['video_time_s'] for k, v in m['frames'].items()}
     assert t['before'] < 2.1 and 2 < t['peak'] < 4 and 4 <= t['after'] < 5 and t['latest'] > 10
     assert 'latest_in_another_view' not in m['flags'] and 'scene_changed' not in m['flags']
-    assert len(m['view_changes_s']) >= 2 and 'not shaking' in m['motion_text']
+    assert len(m['view_changes_s']) >= 2 and 'not the earthquake' in m['motion_text']
 
 
 def test_prepare_quiet_and_missing(prepared):
@@ -298,12 +298,12 @@ def test_map_tags():
 
 
 def test_video_window_and_links():
-    """The window of the video: set by the review, else the detected shaking, else the predicted arrivals"""
+    """The window of the video: set by the review, else the camera vibration detected, else the predicted arrivals"""
     r = dict(video='/data/videos/cam1.mp4', duration_s=60.0, predicted_p_s=3.0, predicted_s_s=6.0, shaking_detected=False,
              frames={'before': {'video_time_s': 1.5}}, record={})
     assert report.video_window(r) == (0.0, 36.0, 'predicted P and S arrivals')
     r.update(shaking_detected=True, onset_s=8.0, end_s=58.0)
-    assert report.video_window(r) == (3.0, 60.0, 'detected shaking')
+    assert report.video_window(r) == (3.0, 60.0, 'camera vibration detected')
     r['record'] = {'video_window_s': [10, 20]}
     assert report.video_window(r) == (10, 20, 'set by the review')
     links = report.video_links(dict(r, video_url='https://example.org/v.mp4'))
@@ -318,11 +318,11 @@ def test_motion_items():
              end_s=25.4, strong_duration_s=18.4, shake_amplitude_px=6.0, view_changes_s=[[5, 6], [25, 26], [45, 46]],
              changed_fraction_after=0.042)
     items = frames.motion_items(m)
-    assert items[0] == 'Shaking 7.0-25.4 s (18 s), up to 6 px'
-    assert 'Camera pans or switches views 3 times (not shaking)' in items
+    assert items[0] == 'Camera vibration 7.0-25.4 s (18 s), up to 6 px'
+    assert 'Camera pans or switches views 3 times (not the earthquake)' in items
     assert 'Scene changed: 4 % of the image' in items and 'Dark at the end (possible outage)' in items
     assert frames.motion_items(dict(flags=['no_video'])) == ['No video']
-    assert frames.motion_items(dict(flags=[], shaking_detected=False)) == ['No shaking detected']
+    assert frames.motion_items(dict(flags=[], shaking_detected=False)) == ['No camera vibration detected']
 
 
 def test_mask_people(prepared, tmp_path):

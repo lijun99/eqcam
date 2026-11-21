@@ -401,7 +401,7 @@ def plot_motion(t, d, sh, shift_px, scale, marks, title, out):
     axes[0].set_title(title, fontsize=10, loc='left')
     axes[1].semilogy(t, np.maximum(sh['jitter'] * scale, 1e-4), lw=1, color='#1f77b4', label='jitter, px per frame')
     axes[1].semilogy(t, np.maximum(sh['drift'] * scale, 1e-4), lw=1, color='#ff7f0e', label='drift, px/s')
-    axes[1].axhline(sh['threshold'] * scale, color='#d62728', lw=0.8, ls='--', label='threshold of the shaking')
+    axes[1].axhline(sh['threshold'] * scale, color='#d62728', lw=0.8, ls='--', label='threshold of the camera vibration')
     axes[1].set_ylim(bottom=max(1e-4, 0.1 * sh['threshold'] * scale))
     axes[1].legend(frameon=False, fontsize=7, ncol=3, loc='upper right')
     axes[1].set_ylabel('image motion', fontsize=9)
@@ -442,10 +442,10 @@ def motion_items(m):
         return ['Video could not be processed']
     items = []
     if m.get('shaking_detected'):
-        items.append(f"Shaking {m['onset_s']:.1f}-{m['end_s']:.1f} s ({m['strong_duration_s']:.0f} s), "
+        items.append(f"Camera vibration {m['onset_s']:.1f}-{m['end_s']:.1f} s ({m['strong_duration_s']:.0f} s), "
                      f"up to {m['shake_amplitude_px']:g} px")
     elif 'shaking_detected' in m:
-        items.append('No shaking detected')
+        items.append('No camera vibration detected')
     if mount := m.get('mount'):
         if mount['resonant']:
             more = '+' if mount['ringing_to_end'] else ''
@@ -454,12 +454,12 @@ def motion_items(m):
         else:
             items.append('No mount resonance: motion closer to the ground shaking')
     if 'shaking_until_a_view_change' in flags:
-        items.append('Shaking lasts until the view changes')
+        items.append('Camera vibration lasts until the view changes')
     elif 'shaking_until_the_end_of_the_clip' in flags:
-        items.append('Shaking lasts until the end of the video')
+        items.append('Camera vibration lasts until the end of the video')
     if m.get('view_changes_s'):
         n = len(m['view_changes_s'])
-        items.append(f"Camera pans or switches views {n} time{'s' if n > 1 else ''} (not shaking)")
+        items.append(f"Camera pans or switches views {n} time{'s' if n > 1 else ''} (not the earthquake)")
     for a, _ in (m.get('sudden_changes_s') or [])[:3]:
         items.append(f'Sudden change of the scene at {a:g} s')
     if 'camera_moved' in flags:
@@ -502,18 +502,18 @@ def motion_text(m):
     if changes:
         listed = ', '.join(f'{a}-{b} s' for a, b in changes[:8]) + (', ...' if len(changes) > 8 else '')
         parts.append(f'The view changes {len(changes)} times (the camera pans, zooms or switches views; this is '
-                     f'not shaking): {listed}.')
+                     f'not the earthquake): {listed}.')
     sudden = m.get('sudden_changes_s') or []
     if sudden:
         parts.append('The scene changes suddenly in the same view (look for what changed) at '
                      + ', '.join(f'{a}-{b} s' for a, b in sudden[:8]) + '.')
     if m.get('shaking_detected'):
-        parts.append(f"Shaking (the whole image jittering within one view) from {m['onset_s']} s to {m['end_s']} s "
-                     f"in the video ({m['strong_duration_s']} s), peak at {m['peak_s']} s; image shake about "
+        parts.append(f"The camera vibrates (the whole image jitters within one view) from {m['onset_s']} s to "
+                     f"{m['end_s']} s in the video ({m['strong_duration_s']} s), peak at {m['peak_s']} s; image motion about "
                      f"{m['shake_amplitude_px']} px, peak image velocity {m['peak_image_velocity_px_s']} px/s, "
                      f"permanent shift {m['permanent_shift_px']} px.")
     elif 'shaking_detected' in m:
-        parts.append('No shaking detected in the video.')
+        parts.append('No camera vibration detected in the video.')
     if mount := m.get('mount'):
         parts.append(mount_text(mount))
     for key in ('changed_fraction_after', 'changed_fraction_latest'):

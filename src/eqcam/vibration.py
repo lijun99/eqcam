@@ -279,7 +279,7 @@ def plot_camera(out, m, summary, t, cam_hp, fr, cam_psd, objects, obj_series, fp
     ax.plot(t, cam_hp[:, 1], color=SERIES[1], lw=1, label='down')
     ax.legend(frameon=False, fontsize=12, loc='upper right')
     ax.set_ylabel('camera displacement, px', fontsize=13, color=INK2)
-    ax.set_xlabel('time in the video, s (shaded: the shaking)', fontsize=13, color=INK2)
+    ax.set_xlabel('time in the video, s (shaded: camera vibration detected)', fontsize=13, color=INK2)
     style(ax)
     ax = fig.add_subplot(gs[1, 0])
     band = fr > 0
