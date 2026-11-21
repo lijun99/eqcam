@@ -37,6 +37,19 @@ const bases = {
 };
 L.control.layers(bases, null, {position: 'topright'}).addTo(map);
 """
+# the panels of the maps (filter, legend, information): a header (.ph) that folds the body (.pb); folded at first
+# on phones (narrow or touch screens), so that they do not hide the map
+PANEL_CSS = r""".ph{cursor:pointer;font-weight:bold;user-select:none} .ph::after{content:' \25BE'}
+.closed .ph::after{content:' \25B8'} .closed .pb{display:none}"""
+PANEL_JS = r"""const small = window.matchMedia('(max-width: 768px), (pointer: coarse)').matches;
+function foldable(d, open) {
+  d.querySelector('.ph').addEventListener('click', () => d.classList.toggle('closed'));
+  if (!open) d.classList.add('closed');
+  L.DomEvent.disableClickPropagation(d);
+  L.DomEvent.disableScrollPropagation(d);
+  return d;
+}
+"""
 FIT_JS = r"""if (bounds.length > 1) map.fitBounds(bounds, {padding: [40, 40]}); else map.setView(bounds[0] || [34, -118], 10);
 // The National Map where it has coverage (the conterminous US, Alaska, Hawaii, Puerto Rico), CARTO elsewhere
 const c = map.getCenter();
@@ -227,15 +240,14 @@ def map_html(rows, event, out):
 .pop ul{{margin:2px 0 4px;padding-left:18px}} .pop li{{margin:0}}
 .pop details{{margin:4px 0;color:#333}} .pop summary{{cursor:pointer;color:#1a5fb4}} .pop img{{margin-top:4px}}
 .leaflet-popup-content img{{max-width:100%;height:auto}}
-.filter .ft{{cursor:pointer}} .filter .ft::after{{content:' \25BE'}} .filter.closed .ft::after{{content:' \25B8'}}
-.filter.closed .fb{{display:none}}
-@media (max-width:600px){{.pop,.filter,.legend{{font-size:14px}} .filter{{max-height:45vh}}}}</style>
+.legend .ph{{margin-bottom:2px}} {PANEL_CSS}
+@media (max-width:768px){{.pop,.filter,.legend{{font-size:14px}} .filter{{max-height:45vh}}}}</style>
 </head><body><div id="map"></div><script>
 const points = {json.dumps(points)};
 const tags = {json.dumps(tag_list)};
 const epi = {json.dumps(epi)};
 const map = L.map('map');
-{BASEMAPS_JS}const bounds = [];
+{BASEMAPS_JS}{PANEL_JS}const bounds = [];
 for (const p of points) {{
   p.marker = L.circleMarker([p.lat, p.lon], {{radius: 8, color: '#222', weight: 1, fillColor: p.color, fillOpacity: 0.9}})
     .bindPopup(p.popup, {{maxWidth: Math.min(420, window.innerWidth - 60)}}).bindTooltip(p.label).addTo(map);
@@ -247,17 +259,13 @@ const filter = L.control({{position: 'topleft'}});
 filter.onAdd = () => {{
   const d = L.DomUtil.create('div', 'filter');
   const esc = s => String(s).replace(/[&<>"]/g, c => ({{'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}})[c]);
-  d.innerHTML = '<b class="ft">Show cameras with</b><div class="fb">' + tags.map(t =>
+  d.innerHTML = '<div class="ph">Show cameras with</div><div class="pb">' + tags.map(t =>
       `<label class="${{t.yes + t.uncertain ? '' : 'zero'}}"><input type="checkbox" data-tag="${{t.key}}"> ` +
       `${{esc(t.label)}}<span class="n">${{t.yes}}${{t.uncertain ? ' + ' + t.uncertain + '?' : ''}}</span></label>`).join('') +
     '<hr><label><input type="checkbox" id="f-uncertain" checked> include uncertain (?)</label>' +
     '<label><input type="checkbox" id="f-hide"> hide the other cameras</label></div>';
-  d.querySelector('.ft').addEventListener('click', () => d.classList.toggle('closed'));
-  if (window.innerWidth < 600) d.classList.add('closed');               // phones: open it with a tap
-  L.DomEvent.disableClickPropagation(d);
-  L.DomEvent.disableScrollPropagation(d);
   d.addEventListener('change', update);
-  return d;
+  return foldable(d, !small);
 }};
 filter.addTo(map);
 function update() {{
@@ -281,7 +289,9 @@ function update() {{
 }}
 if (epi) {{ L.marker(epi).bindPopup({json.dumps(title)}).addTo(map); bounds.push(epi); }}
 {FIT_JS}const legend = L.control({{position: 'bottomright'}});
-legend.onAdd = () => {{ const d = L.DomUtil.create('div', 'legend'); d.innerHTML = {json.dumps(legend)}; return d; }};
+legend.onAdd = () => {{ const d = L.DomUtil.create('div', 'legend');
+  d.innerHTML = '<div class="ph">Legend</div><div class="pb">' + {json.dumps(legend)} + '</div>';
+  return foldable(d, !small); }};
 legend.addTo(map);
 </script></body></html>
 """

@@ -32,7 +32,7 @@ from PIL import Image
 from scipy import signal
 
 from .frames import decode_small, image_shifts, video_fps
-from .report import BASEMAPS_JS, FIT_JS, title_of
+from .report import BASEMAPS_JS, FIT_JS, PANEL_CSS, PANEL_JS, title_of
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt                     # noqa: E402
@@ -422,12 +422,13 @@ def map_html(rows, event, out):
 <style>html,body,#map{{height:100%;margin:0}} .box{{background:#fff;padding:6px 8px;font:12px sans-serif;color:{INK}}}
 .box span{{display:inline-block;width:10px;height:10px;border-radius:5px;margin-right:6px}}
 .leaflet-popup-content{{font:12px/1.45 sans-serif}} .leaflet-popup-content img{{max-width:100%;height:auto}}
-@media (max-width:600px){{.box,.leaflet-popup-content{{font-size:14px}} .box img{{width:150px}}}}</style>
+{PANEL_CSS}
+@media (max-width:768px){{.box,.leaflet-popup-content{{font-size:14px}} .box img{{width:200px}}}}</style>
 </head><body><div id="map"></div><script>
 const points = {json.dumps(points)};
 const epi = {json.dumps(epi)};
 const map = L.map('map');
-{BASEMAPS_JS}const bounds = [];
+{BASEMAPS_JS}{PANEL_JS}const bounds = [];
 for (const p of points) {{
   L.circleMarker([p.lat, p.lon], {{radius: 8, color: '#222', weight: 1, fillColor: p.color, fillOpacity: 0.9}})
     .bindPopup(p.popup, {{maxWidth: Math.min(480, window.innerWidth - 60)}}).bindTooltip(p.label).addTo(map);
@@ -435,12 +436,15 @@ for (const p of points) {{
 }}
 if (epi) {{ L.marker(epi).bindPopup({json.dumps(title)}).addTo(map); bounds.push(epi); }}
 {FIT_JS}const legend = L.control({{position: 'bottomright'}});
-legend.onAdd = () => {{ const d = L.DomUtil.create('div', 'box'); d.innerHTML = {json.dumps(legend)}; return d; }};
+legend.onAdd = () => {{ const d = L.DomUtil.create('div', 'box');
+  d.innerHTML = '<div class="ph">Legend</div><div class="pb">' + {json.dumps(legend)} + '</div>';
+  return foldable(d, !small); }};
 legend.addTo(map);
 const info = L.control({{position: 'topleft'}});
 info.onAdd = () => {{ const d = L.DomUtil.create('div', 'box');
-  d.innerHTML = '<b>Vibration</b> (for scientific use)<br><a href="vibration_summary.png" target="_blank">' +
-    '<img src="vibration_summary.png" width="300"></a><br><a href="map.html">the survey map</a>'; return d; }};
+  d.innerHTML = '<div class="ph">Vibration (for scientific use)</div><div class="pb">' +
+    '<a href="vibration_summary.png" target="_blank"><img src="vibration_summary.png" width="300"></a><br>' +
+    '<a href="map.html">the survey map</a></div>'; return foldable(d, !small); }};
 info.addTo(map);
 </script></body></html>
 """
