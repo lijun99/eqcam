@@ -3,12 +3,14 @@ backend (a fake Anthropic client, a local stand-in for an OpenAI-compatible serv
 a fake backend"""
 
 import csv
+import glob
 import json
 import math
 import os
 import shutil
 import subprocess
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from types import SimpleNamespace
 
@@ -490,3 +492,22 @@ def test_calibrate(tmp_path, monkeypatch):
     assert os.path.exists(os.path.join(out, c['figure']))
     rows = list(csv.DictReader(open(os.path.join(out, 'catalog.csv'))))
     assert rows[0]['ambient_frequency_hz'] == '4.0' and rows[0]['stream_delay_s'] == '2.1'
+    # the periodic cycle: record each stream (here a file, which ffmpeg reads as it would a stream; and one
+    # that does not exist), calibrate, and report the changes; then the first camera goes offline
+    streams = tmp_path / 'streams.csv'
+    streams.write_text('camera_id,name,lat,lon,stream\n'
+                       f"c1,pole,34.05,-118.25,{tmp_path / 'windy.mp4'}\n"
+                       f"c2,gone,34.06,-118.26,{tmp_path / 'missing.mp4'}\n")
+    calibrate.calibrate(None, None, out, streams=str(streams), record_s=20)
+    cams = {c['camera_id']: c for c in json.load(open(os.path.join(out, 'catalog.json')))['cameras']}
+    assert cams['c1']['clips'] == 3 and cams['c1']['uptime'] == 1.0
+    assert cams['c2']['uptime'] == 0.0 and cams['c2']['latest_problems'] == ['offline']
+    assert any('c2 gone: new' in c for c in json.load(open(os.path.join(out, 'changes.json')))['changes'])
+    (recorded,) = glob.glob(os.path.join(out, 'recordings', '*', 'c1.mp4'))
+    time.sleep(1.1)                                             # the next run in its own folder
+    streams.write_text('camera_id,name,lat,lon,stream\n'
+                       f"c1,pole,34.05,-118.25,{tmp_path / 'missing.mp4'}\n")
+    calibrate.calibrate(None, None, out, streams=str(streams), record_s=20, keep_days=0)
+    changes = json.load(open(os.path.join(out, 'changes.json')))['changes']
+    assert changes == ['c1 pole: offline at the latest clip']
+    assert not os.path.exists(recorded)                         # pruned (keep_days=0)

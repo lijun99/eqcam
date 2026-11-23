@@ -15,7 +15,12 @@ Earlier events add what they measured: the mount's frequency and damping in the 
 from the P and S arrivals (with report --vibration). Each clip's results are kept in clips/<camera_id>/
 <clip_id>.json and each event's in events/<event_id>.json, so calibrating more clips or events adds to the
 catalog, which is rebuilt each time: catalog.json, catalog.csv and per camera calibration/<camera_id>.png (the
-ambient spectra of its clips, with the mount frequencies measured at events).
+ambient spectra of its clips, with the mount frequencies measured at events), and changes.json (what changed
+since the catalog before: cameras new, offline or back, no longer usable, a new ambient peak).
+
+For periodic runs, calibrate(streams=...) first records a clip of every live stream (eqcam.record) into
+recordings/<UTC time>/, and deletes the videos older than keep_days; a stream that cannot be recorded counts
+as offline (the uptime of the camera).
 
 The quality bars are provisional (QUALITY below): to be agreed with the users of the catalog.
 """
@@ -183,7 +188,11 @@ def calibrate_clip(row, videos):
     video = os.path.join(videos, row['video']) if row.get('video') else ''
     r = dict(camera_id=row['camera_id'], clip_id=row['clip_id'], video=os.path.basename(video),
              start_utc=row.get('start_utc') or None, wind_mps=float(row['wind_mps']) if row.get('wind_mps') else None,
+             wind_station=row.get('wind_station') or None,
              problems=[], vibration_problems=[])
+    if row.get('error'):                                # the stream could not be recorded
+        r.update(problems=['offline'], error=row['error'])
+        return r
     if not video or not os.path.exists(video):
         r['problems'].append('no video')
         return r
@@ -303,10 +312,15 @@ def summarize(cam, clips, events):
     s = dict(camera_id=cam['camera_id'], name=cam.get('name', ''), lat=cam.get('lat'), lon=cam.get('lon'),
              view=cam.get('view', ''), clips=len(clips))
     with_stream = [c for c in clips if c.get('stream')]
+    if clips:
+        latest = max(clips, key=lambda c: c.get('start_utc') or '')
+        s.update(offline_clips=sum('offline' in c['problems'] for c in clips),
+                 uptime=round(len(with_stream) / len(clips), 2), latest_clip_utc=latest.get('start_utc'),
+                 latest_problems=latest['problems'])
     if with_stream:
         last = max(with_stream, key=lambda c: c.get('start_utc') or '')['stream']
         s['stream'] = {k: last[k] for k in ('width', 'height', 'fps', 'bitrate_kbps', 'codec')}
-    for light in ('day', 'night'):
+    for light in ('day', 'twilight', 'night'):
         cs = [c for c in with_stream if c.get('light') == light]
         if not cs:
             s[light] = None
@@ -352,24 +366,27 @@ def summarize(cam, clips, events):
             close = [g for g in peaks if near(f, g)]
             notes.append(f"{e['event_id']}: mount at {f:g} Hz, " +
                          (f"an ambient peak ({close[0]:g} Hz)" if close else 'not among the ambient peaks'))
-    if not any(s.get(k) for k in ('day', 'night')) and with_stream:
+    if not any(s.get(k) for k in ('day', 'twilight', 'night')) and with_stream:
         notes.append('no clip with known light')
     s['notes'] = notes
     return s
 
 
-CSV_FIELDS = ['camera_id', 'name', 'lat', 'lon', 'clips', 'width', 'height', 'fps', 'bitrate_kbps', 'day_usable',
-              'day_problems', 'night_usable', 'night_problems', 'touring', 'calm_jitter_px', 'vibration_usable',
-              'vibration_problems', 'ambient_frequency_hz', 'ambient_peaks_hz', 'ambient_damping', 'ambient_rms_px',
-              'events', 'resonant_at_events', 'mount_frequency_at_events_hz', 'stream_delay_s', 'notes']
+CSV_FIELDS = ['camera_id', 'name', 'lat', 'lon', 'clips', 'uptime', 'latest_clip_utc', 'width', 'height', 'fps',
+              'bitrate_kbps', 'day_usable', 'day_problems', 'twilight_usable', 'twilight_problems', 'night_usable',
+              'night_problems', 'touring', 'calm_jitter_px', 'vibration_usable', 'vibration_problems',
+              'ambient_frequency_hz', 'ambient_peaks_hz', 'ambient_damping', 'ambient_rms_px', 'events',
+              'resonant_at_events', 'mount_frequency_at_events_hz', 'stream_delay_s', 'notes']
 
 
 def csv_row(s):
     st, amb = s.get('stream') or {}, s.get('ambient') or {}
-    day, night = s.get('day') or {}, s.get('night') or {}
+    day, dusk, night = s.get('day') or {}, s.get('twilight') or {}, s.get('night') or {}
     return dict(camera_id=s['camera_id'], name=s['name'], lat=s['lat'], lon=s['lon'], clips=s['clips'],
+                uptime=s.get('uptime'), latest_clip_utc=s.get('latest_clip_utc'),
                 width=st.get('width'), height=st.get('height'), fps=st.get('fps'), bitrate_kbps=st.get('bitrate_kbps'),
                 day_usable=day.get('usable'), day_problems='; '.join(day.get('problems') or []),
+                twilight_usable=dusk.get('usable'), twilight_problems='; '.join(dusk.get('problems') or []),
                 night_usable=night.get('usable'), night_problems='; '.join(night.get('problems') or []),
                 touring=s['touring'], calm_jitter_px=s['calm_jitter_px'], vibration_usable=s['vibration_usable'],
                 vibration_problems='; '.join(s['vibration_problems']), ambient_frequency_hz=amb.get('frequency_hz'),
@@ -433,6 +450,9 @@ def build_catalog(out, cameras=None):
     with open(path, 'w') as f:
         json.dump(list(known.values()), f, indent=1)
     os.makedirs(os.path.join(out, 'calibration'), exist_ok=True)
+    before = {}
+    if os.path.exists(os.path.join(out, 'catalog.json')):
+        before = {c['camera_id']: c for c in json.load(open(os.path.join(out, 'catalog.json')))['cameras']}
     catalog = []
     for cid, cam in sorted(known.items()):
         mine = [c for c in clips if c['camera_id'] == cid]
@@ -448,7 +468,39 @@ def build_catalog(out, cameras=None):
         w = csv.DictWriter(f, CSV_FIELDS)
         w.writeheader()
         w.writerows(csv_row(s) for s in catalog)
+    changes = [c for s in catalog for c in changes_of(before.get(s['camera_id']), s)]
+    with open(os.path.join(out, 'changes.json'), 'w') as f:
+        json.dump(dict(built_utc=dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds'), changes=changes),
+                  f, indent=1)
     return catalog
+
+
+def changes_of(old, new):
+    """What changed in a camera's entry since the catalog before: new, offline or back, usable or not by day,
+    by night and for vibration, a new strongest ambient peak"""
+    cid = f"{new['camera_id']} {new['name']}"
+    if old is None:
+        return [f'{cid}: new in the catalog']
+    out = []
+    if 'offline' in (new.get('latest_problems') or []) and 'offline' not in (old.get('latest_problems') or []):
+        out.append(f'{cid}: offline at the latest clip')
+    if 'offline' in (old.get('latest_problems') or []) and new.get('latest_problems') is not None and \
+            'offline' not in new['latest_problems']:
+        out.append(f'{cid}: back online')
+    for light in ('day', 'twilight', 'night'):
+        a, b = (old.get(light) or {}).get('usable'), (new.get(light) or {}).get('usable')
+        if a is not None and b is not None and a != b:
+            why = '; '.join((new.get(light) or {}).get('problems') or [])
+            out.append(f"{cid}: {'now usable' if b else 'no longer usable'} by {light}" + (f' ({why})' if why else ''))
+    a, b = old.get('vibration_usable'), new.get('vibration_usable')
+    if a is not None and b is not None and a != b:
+        out.append(f"{cid}: {'now usable' if b else 'no longer usable'} for vibration")
+    fa, fb = (old.get('ambient') or {}).get('frequency_hz'), (new.get('ambient') or {}).get('frequency_hz')
+    if fa and fb and not near(fa, fb):
+        out.append(f'{cid}: strongest ambient peak {fa:g} -> {fb:g} Hz')
+    if old.get('touring') is False and new.get('touring'):
+        out.append(f'{cid}: now touring views')
+    return out
 
 
 def clip_id_of(row):
@@ -459,9 +511,27 @@ def clip_id_of(row):
     return base + (f"_{float(row['start_s']):.0f}s" if row.get('start_s') else '')
 
 
-def calibrate(clips_csv, videos, out, events=(), only=None):
+def prune(recordings, keep_days):
+    """Delete the videos of the recordings older than keep_days (their clips.csv stays)"""
+    limit = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=keep_days)
+    for folder in glob.glob(os.path.join(recordings, '*')):
+        try:
+            t = dt.datetime.strptime(os.path.basename(folder), '%Y%m%dT%H%M%SZ').replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            continue
+        if t < limit:
+            for video in glob.glob(os.path.join(folder, '*.mp4')):
+                os.remove(video)
+
+
+def calibrate(clips_csv, videos, out, events=(), only=None, streams=None, record_s=180.0, wind=False,
+              keep_days=7.0, workers=4):
     """Calibrate the clips listed (camera_id, name, lat, lon, video, and optionally start_utc, view, clip_id,
-    start_s, end_s, wind_mps), add the events' runs, and rebuild the catalog"""
+    start_s, end_s, wind_mps, error), add the events' runs, and rebuild the catalog. With streams, first record
+    a clip of each stream into out/recordings/<UTC time>/ (and delete the videos older than keep_days)"""
+    if streams:
+        from .record import record
+        videos, clips_csv = record(streams, os.path.join(out, 'recordings'), record_s, only, wind, workers)
     rows = read_cameras(clips_csv) if clips_csv else []
     if only:
         rows = [r for r in rows if r['camera_id'] in only]
@@ -477,7 +547,10 @@ def calibrate(clips_csv, videos, out, events=(), only=None):
         with open(os.path.join(cdir, f"{row['clip_id']}.json"), 'w') as f:
             json.dump(r, f, indent=1)
         amb = r.get('ambient') or {}
-        print(f"{row['camera_id']} {row['clip_id']}: {r.get('light', '?')}, "
+        if 'offline' in r['problems']:
+            print(f"{row['camera_id']} {row['clip_id']}: offline", flush=True)
+            continue
+        print(f"{row['camera_id']} {row['clip_id']}: {r.get('light', '-')}, "
               f"{'; '.join(r['problems']) or 'usable'}; vibration: {'; '.join(r['vibration_problems']) or 'usable'}; "
               f"ambient {amb.get('frequency_hz', 'no')} Hz peak", flush=True)
     os.makedirs(os.path.join(out, 'events'), exist_ok=True)
@@ -486,5 +559,9 @@ def calibrate(clips_csv, videos, out, events=(), only=None):
         with open(os.path.join(out, 'events', f"{e['event_id']}.json"), 'w') as f:
             json.dump(e, f, indent=1)
     catalog = build_catalog(out, rows)
+    if streams and keep_days is not None:
+        prune(os.path.join(out, 'recordings'), keep_days)
     print(f'{len(catalog)} cameras in {os.path.join(out, "catalog.json")}')
+    for line in json.load(open(os.path.join(out, 'changes.json')))['changes']:
+        print('  ' + line)
     return catalog

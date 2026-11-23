@@ -1,6 +1,6 @@
 ---
 name: eqcam
-description: Rapid survey of camera videos after an earthquake - prepare the frames before, during and after the shaking, review them for structural damage, landslides, ground failure, fire, smoke, outages and shaking intensity (with Claude, Gemini or Qwen3-VL through an API, or in this session), and make the table and map. Use when given an event's camera videos (e.g., downloaded by the ShakeAlert/PDL server) or asked to survey or review earthquake camera footage.
+description: Rapid survey of camera videos after an earthquake - prepare the frames before, during and after the shaking, review them for structural damage, landslides, ground failure, fire, smoke, outages and shaking intensity (with Claude, Gemini or Qwen3-VL through an API, or in this session), and make the table and map. Use when given an event's camera videos (e.g., downloaded by the ShakeAlert/PDL server) or asked to survey or review earthquake camera footage. Also the periodic survey and calibration of the cameras outside events (record their live streams, check quality day and night, measure the mount's resonance, update the camera catalog).
 ---
 
 # eqcam: camera survey after an earthquake
@@ -129,17 +129,68 @@ for further analysis in `vibration_data/` and `vibration_data.zip` (motion and s
 `cameras.json`, a README). Tell the user the picks, S-P against the expected, and the stream delays (each pick
 minus its predicted arrival; P and S must agree); P is often too weak near the source.
 
-## 5. Calibration (outside events)
+## 5. Camera survey and calibration (periodic, outside events)
 
-When asked to check or calibrate cameras from routine clips (not at an event):
+When asked to survey, check or calibrate the cameras, or to update the calibration. The calibration lives in
+**`<repo>/calibration/`** (not in git; the recordings are large):
 
-```bash
-eqcam calibrate --clips clips.csv --videos <folder> --out catalog/ [--events runs/<id>/run ...]
+```
+calibration/
+  streams.csv               the camera list: camera_id, name, lat, lon, stream (a YouTube watch/live URL, or any
+                            URL ffmpeg reads: HLS .m3u8, RTSP, HTTP), view
+  catalog/
+    catalog.csv, .json      one entry per camera (the current state; rebuilt every run)
+    changes.json            what changed in the last run
+    calibration/<id>.png    the ambient spectra of the camera's clips, with its mount frequencies at events
+    clips/<id>/<clip>.json  the results of every clip (the history: keep)
+    events/<event>.json     what each event measured per camera (keep)
+    recordings/<UTC time>/  the clips recorded and their clips.csv (videos deleted after --keep-days)
 ```
 
-`clips.csv` has the columns of `videos.csv`, and optionally `clip_id`, `start_s`, `end_s`, `wind_mps`. Clips
-and events add to the catalog folder; `catalog.csv` has one row per camera. Tell the user, per camera: usable by
-day and by night (and the problems: low resolution, dark, frozen, blurred), fixed or touring, usable for
-vibration, the ambient peaks and whether the mount frequency measured at events is among them, and the median
-stream delay. The quality bars are provisional (`QUALITY` in `calibrate.py`); a single short clip says little
-about the mount: look at `calibration/<id>.png`.
+**a. The camera list.** Add or update cameras in `streams.csv` when the user gives them (Igor's list): one row
+per camera, with its location (it sets day or night and the distances at events). Keep `camera_id` stable: the
+history and the events are matched by it, and at an event the `videos.csv` should use the same ids. Never
+remove a row without asking: mark a retired camera in `view` instead.
+
+**b. One survey run** (records every stream, calibrates the clips, adds to the catalog, prunes old videos):
+
+```bash
+eqcam calibrate --streams calibration/streams.csv --record 180 --wind --out calibration/catalog
+```
+
+YouTube streams need yt-dlp (`pip install "eqcam[record]"`, and `yt-dlp` on the PATH; keep it updated, YouTube
+changes often). A stream that cannot be recorded counts as offline (the camera's `uptime`). It takes about
+`--record` plus 15 s per camera, `--workers` (4) streams at a time.
+
+**c. Periodically.** The calibration needs clips by day, twilight and night, and on calm and windy days, so run
+it at several times of day, e.g., every 6 h; on wind advisory days add runs (`--wind` records the wind at the
+nearest weather station, api.weather.gov, US only). Unattended, on a host that stays up, with cron (scripts and
+logs in `~/scripts/eqcam/` on the lab hosts):
+
+```
+15 */6 * * *  cd <repo> && .venv/bin/eqcam calibrate --streams calibration/streams.csv --record 180 --wind --out calibration/catalog >> ~/scripts/eqcam/calibrate.log 2>&1
+```
+
+Ask the user before installing a cron job. In a session, `/loop 6h /eqcam survey the cameras` does the same
+while the session is open.
+
+**d. After each run, tell the user** from `changes.json` what changed (cameras new, offline or back online, no
+longer usable by day or night or for vibration, a new strongest ambient peak, now touring), and from
+`catalog.csv` the counts: cameras usable by day, by night, for vibration; offline at the latest run; with an
+ambient peak repeated over several clips. Say nothing more when nothing changed.
+
+**e. After each event**, add what it measured (the mount in the shaking, and the stream delays with
+`report --vibration`):
+
+```bash
+eqcam calibrate --events runs/<event_id>/run --out calibration/catalog
+```
+
+Per camera, the catalog gives: usable by day, twilight and night (and the problems: low resolution, dark,
+frozen, blurred), fixed or touring, usable for vibration (frame rate, a stable view, steady), the ambient peaks
+(grouped over the clips; a peak in many clips is the mount) and whether the mount frequency measured at events
+is among them, the uptime and the median stream delay. The quality bars (`QUALITY` in `calibrate.py`) are
+provisional: do not change them without the user. One short clip says little about the mount: look at
+`calibration/<id>.png` before relying on a frequency. Older clips can also be calibrated from files with
+`--clips clips.csv --videos <folder>` (the columns of `videos.csv`, and optionally `clip_id`, `start_s`,
+`end_s`, `wind_mps`).

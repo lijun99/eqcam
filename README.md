@@ -230,13 +230,23 @@ while a popup is open, and popups are kept within the screen, shown from their t
 
 ## Calibration (before events)
 
+A periodic survey of the cameras' live streams builds a catalog of the cameras, to use at events:
+
 ```bash
-eqcam calibrate --clips clips.csv --videos <folder> --out catalog/ [--events runs/*/run]
+pip install "eqcam[record]"           # yt-dlp, for YouTube streams
+eqcam calibrate --streams calibration/streams.csv --record 180 --wind --out calibration/catalog   # e.g., every 6 h
+eqcam calibrate --events runs/<event_id>/run --out calibration/catalog                         # after each event
 ```
 
-`clips.csv` lists clips recorded routinely from each camera's stream (a few minutes, by day and by night, on
-calm and windy days): the columns of `videos.csv`, and optionally `clip_id`, `start_s` and `end_s` (the part of
-the video to use) and `wind_mps`. For each clip:
+`streams.csv` is the camera list: `camera_id, name, lat, lon, stream` (a YouTube watch or live URL, read
+through yt-dlp, or any URL ffmpeg reads: HLS, RTSP, HTTP) and optionally `view`. Each run records a clip of every
+stream (`eqcam record`; video only, as streamed) into `recordings/<UTC time>/`, with the wind at the nearest
+weather station reporting it (`--wind`, api.weather.gov, US only); a stream that cannot be recorded counts as
+offline. The videos are deleted after `--keep-days` (7). Run it at several times of day (day, twilight and night)
+and on windy days; unattended, from cron on a host that stays up. The Claude Code skill has the procedure
+(section 5), including what to report after each run. Clips recorded otherwise can be calibrated with
+`--clips clips.csv --videos <folder>` (the columns of `videos.csv`, and optionally `clip_id`, `start_s` and
+`end_s`, the part of the video to use, and `wind_mps`). For each clip:
 
 - **quality**: resolution, frame rate, bitrate; brightness, contrast, sharpness (variance of the Laplacian),
   frozen frames; day, twilight or night from the elevation of the sun at the camera (else the brightness). The
@@ -250,11 +260,12 @@ the video to use) and `wind_mps`. For each clip:
 `--events` adds what earlier events measured per camera: the mount's frequency and damping in the shaking, and
 the stream delay from the P and S arrivals (with `report --vibration`). Clips and events accumulate in the
 catalog folder (`clips/<camera_id>/<clip_id>.json`, `events/<event_id>.json`), and every run rebuilds
-`catalog.json`, `catalog.csv` (one row per camera: day and night usable and why not, touring, ambient peaks,
-mount at events, median stream delay, notes) and per camera `calibration/<camera_id>.png` (the ambient spectra
-of its clips, by light, with the mount frequencies of the events). Not yet: the scene inventory (which intensity
-levels a view can constrain, one model call per view), picking windy days from weather data, stream delays from
-burned-in clocks, and `prepare` reading the catalog.
+`catalog.json`, `catalog.csv` (one row per camera: uptime, day, twilight and night usable and why not, touring,
+ambient peaks, mount at events, median stream delay, notes), per camera `calibration/<camera_id>.png` (the
+ambient spectra of its clips, by light, with the mount frequencies of the events) and `changes.json` (cameras
+new, offline or back online, no longer usable, a new ambient peak). Not yet: the scene inventory (which intensity
+levels a view can constrain, one model call per view), stream delays from burned-in clocks, and `prepare`
+reading the catalog.
 
 On the 2026-11-20 M3.9 videos (2 min after the shaking, at night), the ambient peaks match the mount at the event
 at Skid Row (2.5 Hz) and at the Caltrans pole (5 Hz, with modes at 1.1 and 2.5 Hz); not at Venice (0.5 min of

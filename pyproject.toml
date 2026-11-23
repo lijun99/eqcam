@@ -13,6 +13,7 @@ dependencies = ["numpy", "scipy", "matplotlib", "pillow"]
 [project.optional-dependencies]
 claude = ["anthropic[vertex]"]
 gemini = ["google-genai"]
+record = ["yt-dlp"]
 test = ["pytest"]
 
 [project.scripts]

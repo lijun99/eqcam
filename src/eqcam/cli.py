@@ -6,12 +6,14 @@
   eqcam report    the table and the maps
   eqcam run       prepare, review (and escalate), report
   eqcam calibrate a catalog of the cameras (quality, views, ambient vibration) from clips outside events
+  eqcam record    a clip of each live stream (calibrate --streams records and calibrates in one go)
 
 examples:
   eqcam prepare --cameras videos.csv --videos /data/event123 --event event.json --out runs/event123
   eqcam review --out runs/event123 --backend claude --model claude-haiku-5-5 --stage screen
   eqcam review --out runs/event123 --backend claude --stage final --escalate-from screen
   eqcam report --out runs/event123
+  eqcam calibrate --streams streams.csv --out calibration/catalog      # periodically (cron)
   eqcam run --cameras videos.csv --videos /data/event123 --event event.json --out runs/event123 --backend qwen
 """
 
@@ -91,6 +93,22 @@ def main(argv=None):
                    'to add: the mount at the shaking, the stream delays')
     c.add_argument('--only', nargs='+', help='only these camera ids')
     c.add_argument('--out', required=True, help='the catalog folder (clips and events are added to it)')
+    c.add_argument('--streams', help='record a clip of each live stream first (.csv: camera_id, name, lat, lon, '
+                   'stream, and optionally view) into OUT/recordings/<UTC time>/, then calibrate it')
+    c.add_argument('--record', type=float, default=180, help='with --streams: seconds per clip (default: %(default)s)')
+    c.add_argument('--wind', action='store_true', help='with --streams: the wind speed at the nearest weather '
+                   'station (US, api.weather.gov)')
+    c.add_argument('--keep-days', type=float, default=7, help='with --streams: delete the recorded videos older than '
+                   'this (default: %(default)s)')
+    c.add_argument('--workers', type=int, default=4, help='with --streams: streams recorded at a time '
+                   '(default: %(default)s)')
+    d = sub.add_parser('record', help='record a clip of each live stream (for calibrate)')
+    d.add_argument('--streams', required=True, help='the streams (.csv: camera_id, name, lat, lon, stream, view)')
+    d.add_argument('--seconds', type=float, default=180, help='per clip (default: %(default)s)')
+    d.add_argument('--only', nargs='+', help='only these camera ids')
+    d.add_argument('--wind', action='store_true', help='the wind speed at the nearest weather station (US)')
+    d.add_argument('--workers', type=int, default=4, help='streams recorded at a time (default: %(default)s)')
+    d.add_argument('--out', required=True, help='the folder; each run in a subfolder named by its UTC time')
     a = sub.add_parser('run', help='prepare, review, report')
     add_prepare_args(a)
     a.add_argument('--out', required=True)
@@ -116,7 +134,11 @@ def main(argv=None):
         report(args.out, args.stages, mask=not args.no_mask, vibration=args.vibration)
     elif args.command == 'calibrate':
         from .calibrate import calibrate
-        calibrate(args.clips, args.videos, args.out, args.events, args.only)
+        calibrate(args.clips, args.videos, args.out, args.events, args.only, args.streams, args.record, args.wind,
+                  args.keep_days, args.workers)
+    elif args.command == 'record':
+        from .record import record
+        record(args.streams, args.out, args.seconds, args.only, args.wind, args.workers)
     else:
         prepare(args.cameras, args.videos, args.out, args.event, args.only, motion_fps=args.motion_fps,
                 motion_width=args.motion_width, max_seconds=args.max_seconds)

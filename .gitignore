@@ -11,6 +11,7 @@ dist/
 *.mkv
 runs/
 data/
+calibration/
 
 # local environment
 .venv/
