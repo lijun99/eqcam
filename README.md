@@ -40,8 +40,45 @@ skill](#testing-with-the-claude-code-skill).
 pip install -e .                    # numpy, scipy, matplotlib, pillow; ffmpeg and ffprobe on the PATH
 pip install -e ".[claude]"          # Claude through the Anthropic API or Vertex AI
 pip install -e ".[gemini]"          # Gemini through Vertex AI
+pip install -e ".[record]"          # yt-dlp, to record YouTube live streams (calibrate --streams, eqcam record)
 pip install -e ".[test]" && pytest  # tests need no API
 ```
+
+## Usage
+
+An event, step by step (`eqcam <command> -h` lists every option):
+
+```bash
+eqcam prepare --cameras videos.csv --videos <folder> --event event.json --out runs/E
+eqcam review  --out runs/E --backend claude          # or gemini, qwen; see Backends
+eqcam report  --out runs/E [--vibration]             # --vibration: the vibration and arrivals maps and data
+```
+
+or all at once, with an optional second model on the cameras the first one flags:
+
+```bash
+eqcam run --cameras videos.csv --videos <folder> --event event.json --out runs/E --backend claude \
+          --model claude-haiku-5-5 --escalate-model claude-opus-5-5 [--vibration]
+```
+
+| option | command | |
+|---|---|---|
+| `--only ID ...` | prepare, review, run, calibrate, record | only these cameras |
+| `--max-seconds` | prepare, run | the longest part of a video decoded (600 s; with `start_utc` and the event, around the predicted arrivals) |
+| `--motion-fps`, `--motion-width` | prepare, run | the frames for the motion (15 fps, 320 px) |
+| `--workers` | review, run, calibrate, record | requests (8) or streams (4) at a time |
+| `--stage`, `--escalate-from`, `--min-severity` | review, run | name the review stage; review only the cameras an earlier stage flagged (severity 2 or more, low confidence, errors) |
+| `--overwrite` | review, run | review again the cameras that have findings (otherwise they are skipped, so a run can resume) |
+| `--escalate-model` | run | a second model for the flagged cameras (stage `final`) |
+| `--stages` | report | the stages to take the findings from, in order (final, review, screen) |
+| `--no-mask` | report, run | do not blur the people |
+| `--vibration` | report, run | the vibration and the P and S arrivals, for scientific use |
+
+`eqcam validate --out runs/E --stage review` checks findings written by hand or in a Claude Code session. Outside
+events: `eqcam calibrate` and `eqcam record` (see [Calibration](#calibration-before-events)).
+
+Before publishing, check the event in a catalog (e.g., USGS): the alert's first magnitude is often revised. Put
+the catalog's magnitude in `event.json` and the event page in `url`.
 
 ## Tests and demo
 
@@ -238,17 +275,21 @@ A periodic survey of the cameras' live streams builds a catalog of the cameras, 
 pip install "eqcam[record]"           # yt-dlp, for YouTube streams
 eqcam calibrate --streams calibration/streams.csv --record 180 --wind --out calibration/catalog   # e.g., every 6 h
 eqcam calibrate --events runs/<event_id>/run --out calibration/catalog                         # after each event
+eqcam record --streams calibration/streams.csv --seconds 180 --out recordings/                 # recording only
 ```
 
 `streams.csv` is the camera list: `camera_id, name, lat, lon, stream` (a YouTube watch or live URL, read
 through yt-dlp, or any URL ffmpeg reads: HLS, RTSP, HTTP) and optionally `view`. Each run records a clip of every
-stream (`eqcam record`; video only, as streamed) into `recordings/<UTC time>/`, with the wind at the nearest
+stream (`eqcam record`; video only, as streamed; `--record` seconds, 180) into `recordings/<UTC time>/`, with the wind at the nearest
 weather station reporting it (`--wind`, api.weather.gov, US only); a stream that cannot be recorded counts as
 offline. The videos are deleted after `--keep-days` (7). Run it at several times of day (day, twilight and night)
-and on windy days; unattended, from cron on a host that stays up. The Claude Code skill has the procedure
-(section 5), including what to report after each run. Clips recorded otherwise can be calibrated with
+and on windy days; unattended, from a scheduler (e.g., cron, `15 */6 * * *`) on the machine that records the
+streams. It needs Python 3.10+, numpy, scipy, matplotlib, pillow, ffmpeg, and yt-dlp for YouTube. If that
+machine already records the streams on a schedule, keep its recorder and pass each batch of files instead:
 `--clips clips.csv --videos <folder>` (the columns of `videos.csv`, and optionally `clip_id`, `start_s` and
-`end_s`, the part of the video to use, and `wind_mps`). For each clip:
+`end_s`, the part of the video to use, and `wind_mps`), with the same `camera_id` as in the event `videos.csv`.
+The catalog folder is plain JSON, CSV and PNG, easy to copy elsewhere for analysis. The Claude Code skill has
+the procedure (section 5), including what to report after each run. For each clip:
 
 - **quality**: resolution, frame rate, bitrate; brightness, contrast, sharpness (variance of the Laplacian),
   frozen frames; day, twilight or night from the elevation of the sun at the camera (else the brightness). The

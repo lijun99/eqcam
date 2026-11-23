@@ -135,7 +135,8 @@ minus its predicted arrival; P and S must agree); P is often too weak near the s
 ## 5. Camera survey and calibration (periodic, outside events)
 
 When asked to survey, check or calibrate the cameras, or to update the calibration. The calibration lives in
-**`<repo>/calibration/`** (not in git; the recordings are large):
+one folder (below, `calibration/`; use the one the user names, ask if none is known; keep it out of git, the
+recordings are large):
 
 ```
 calibration/
@@ -150,7 +151,7 @@ calibration/
     recordings/<UTC time>/  the clips recorded and their clips.csv (videos deleted after --keep-days)
 ```
 
-**a. The camera list.** Add or update cameras in `streams.csv` when the user gives them (Igor's list): one row
+**a. The camera list.** Add or update cameras in `streams.csv` when the user gives them: one row
 per camera, with its location (it sets day or night and the distances at events). Keep `camera_id` stable: the
 history and the events are matched by it, and at an event the `videos.csv` should use the same ids. Never
 remove a row without asking: mark a retired camera in `view` instead.
@@ -167,15 +168,18 @@ changes often). A stream that cannot be recorded counts as offline (the camera's
 
 **c. Periodically.** The calibration needs clips by day, twilight and night, and on calm and windy days, so run
 it at several times of day, e.g., every 6 h; on wind advisory days add runs (`--wind` records the wind at the
-nearest weather station, api.weather.gov, US only). Unattended, on a host that stays up, with cron (scripts and
-logs in `~/scripts/eqcam/` on the lab hosts):
+nearest weather station, api.weather.gov, US only). Unattended, on the machine that records the streams, with
+a scheduler such as cron:
 
 ```
-15 */6 * * *  cd <repo> && .venv/bin/eqcam calibrate --streams calibration/streams.csv --record 180 --wind --out calibration/catalog >> ~/scripts/eqcam/calibrate.log 2>&1
+15 */6 * * *  eqcam calibrate --streams <dir>/streams.csv --record 180 --wind --out <dir>/catalog >> <dir>/calibrate.log 2>&1
 ```
 
-Ask the user before installing a cron job. In a session, `/loop 6h /eqcam survey the cameras` does the same
-while the session is open.
+If that machine already records the streams on a schedule, keep its recorder and pass each batch of files
+instead: `--clips clips.csv --videos <folder>` (`camera_id, name, lat, lon, video, start_utc`; the same
+`camera_id` as at events). Ask the user before installing a scheduled job. In a session,
+`/loop 6h /eqcam survey the cameras` does the same while the session is open. When the user brings back a
+catalog folder from another machine, read it as in d.
 
 **d. After each run, tell the user** from `changes.json` what changed (cameras new, offline or back online, no
 longer usable by day or night or for vibration, a new strongest ambient peak, now touring), and from
