@@ -128,3 +128,18 @@ the noise, P and S windows; `arrivals_summary.png`, S-P against the distance and
 for further analysis in `vibration_data/` and `vibration_data.zip` (motion and spectra CSV per camera,
 `cameras.json`, a README). Tell the user the picks, S-P against the expected, and the stream delays (each pick
 minus its predicted arrival; P and S must agree); P is often too weak near the source.
+
+## 5. Calibration (outside events)
+
+When asked to check or calibrate cameras from routine clips (not at an event):
+
+```bash
+eqcam calibrate --clips clips.csv --videos <folder> --out catalog/ [--events runs/<id>/run ...]
+```
+
+`clips.csv` has the columns of `videos.csv`, and optionally `clip_id`, `start_s`, `end_s`, `wind_mps`. Clips
+and events add to the catalog folder; `catalog.csv` has one row per camera. Tell the user, per camera: usable by
+day and by night (and the problems: low resolution, dark, frozen, blurred), fixed or touring, usable for
+vibration, the ambient peaks and whether the mount frequency measured at events is among them, and the median
+stream delay. The quality bars are provisional (`QUALITY` in `calibrate.py`); a single short clip says little
+about the mount: look at `calibration/<id>.png`.

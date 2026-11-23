@@ -5,6 +5,7 @@
   eqcam validate  check findings written by hand or in a Claude Code session
   eqcam report    the table and the maps
   eqcam run       prepare, review (and escalate), report
+  eqcam calibrate a catalog of the cameras (quality, views, ambient vibration) from clips outside events
 
 examples:
   eqcam prepare --cameras videos.csv --videos /data/event123 --event event.json --out runs/event123
@@ -82,6 +83,14 @@ def main(argv=None):
                    '(from the people_boxes of the review)')
     o.add_argument('--vibration', action='store_true', help='also the vibration of the cameras and of the objects in '
                    'their views, for scientific use: vibration.html, figures per camera (decodes the videos again)')
+    c = sub.add_parser('calibrate', help='a catalog of the cameras from clips recorded outside events')
+    c.add_argument('--clips', help='the clips (.csv: camera_id, name, lat, lon, video, and optionally start_utc, '
+                   'view, clip_id, start_s, end_s, wind_mps)')
+    c.add_argument('--videos', default='.', help='the folder the video paths are relative to (default: %(default)s)')
+    c.add_argument('--events', nargs='+', default=[], help='runs of earlier events (the folders with metrics.json) '
+                   'to add: the mount at the shaking, the stream delays')
+    c.add_argument('--only', nargs='+', help='only these camera ids')
+    c.add_argument('--out', required=True, help='the catalog folder (clips and events are added to it)')
     a = sub.add_parser('run', help='prepare, review, report')
     add_prepare_args(a)
     a.add_argument('--out', required=True)
@@ -105,6 +114,9 @@ def main(argv=None):
         sys.exit(1 if problems else 0)
     elif args.command == 'report':
         report(args.out, args.stages, mask=not args.no_mask, vibration=args.vibration)
+    elif args.command == 'calibrate':
+        from .calibrate import calibrate
+        calibrate(args.clips, args.videos, args.out, args.events, args.only)
     else:
         prepare(args.cameras, args.videos, args.out, args.event, args.only, motion_fps=args.motion_fps,
                 motion_width=args.motion_width, max_seconds=args.max_seconds)

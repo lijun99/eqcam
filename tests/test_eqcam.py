@@ -17,7 +17,7 @@ import pytest
 from PIL import Image
 from scipy import ndimage
 
-from eqcam import arrivals, backends, frames, mask, report, review, schema, vibration
+from eqcam import arrivals, backends, calibrate, frames, mask, report, review, schema, vibration
 
 FPS, H, W = 30, 360, 640
 
@@ -439,3 +439,54 @@ def test_arrivals():
     x[:, :] = np.stack([burst(13, 0.6, 3, 3), burst(13, 0.4, 2.5, 3)], 1) + rng.normal(0, 0.002, x.shape)
     p, _, _ = arrivals.pick(t, x, fps, m, dict(depth_km=10))
     assert p['quality'] == 'S only' and abs(p['s_s'] - 13) < 0.2 and p['p_s'] is None
+
+
+def test_calibrate(tmp_path, monkeypatch):
+    """A clip of a camera swaying 0.2 px at 4 Hz in the wind, and a dark, frozen clip of the same camera by
+    night; an earlier event that measured its mount at 4 Hz and a stream delay: the catalog has the ambient
+    peak, matching the event, the bad night clip, and the delay"""
+    assert calibrate.sun_elevation(frames.parse_time('2026-11-20T11:25:00Z'), 34.05, -118.25) < -6   # 3:25 am
+    assert calibrate.sun_elevation(frames.parse_time('2026-06-21T20:00:00Z'), 34.05, -118.25) > 70   # 1 pm
+    rng = np.random.default_rng(7)
+    scene = ndimage.gaussian_filter(rng.uniform(0, 255, (H + 40, W + 40)), 2)
+    scene = (255 * (scene - scene.min()) / np.ptp(scene)).astype(np.float32)
+    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'gray', '-s', f'{W}x{H}',
+           '-r', str(FPS), '-i', '-', '-c:v', 'libx264', '-crf', '12', '-pix_fmt', 'yuv420p']
+    proc = subprocess.Popen(cmd + [str(tmp_path / 'windy.mp4')], stdin=subprocess.PIPE)
+    for k in range(int(30 * FPS)):
+        sway = 0.2 * np.sin(2 * np.pi * 4.0 * k / FPS + 0.3 * np.sin(k / FPS))
+        img = ndimage.shift(scene, (sway, 0.5 * sway), order=1)[20:20 + H, 20:20 + W]
+        proc.stdin.write(np.clip(img + rng.normal(0, 1.5, img.shape), 0, 255).astype(np.uint8).tobytes())
+    proc.stdin.close()
+    assert proc.wait() == 0
+    proc = subprocess.Popen(cmd + [str(tmp_path / 'night.mp4')], stdin=subprocess.PIPE)
+    dark = (0.05 * scene[20:20 + H, 20:20 + W]).astype(np.uint8).tobytes()
+    for k in range(int(10 * FPS)):
+        proc.stdin.write(dark)
+    proc.stdin.close()
+    assert proc.wait() == 0
+    with open(tmp_path / 'clips.csv', 'w') as f:
+        f.write('camera_id,name,lat,lon,video,start_utc\n'
+                'c1,pole,34.05,-118.25,windy.mp4,2026-06-21T20:00:00Z\n'
+                'c1,pole,34.05,-118.25,night.mp4,2026-11-20T11:25:00Z\n')
+    run = tmp_path / 'event' / 'run'
+    os.makedirs(run / 'vibration_data')
+    (run / 'event.json').write_text(json.dumps(dict(event_id='ev1', lat=34.0, lon=-118.2, magnitude=4.0)))
+    (run / 'metrics.json').write_text(json.dumps([dict(
+        camera_id='c1', name='pole', lat=34.05, lon=-118.25, shaking_detected=True,
+        mount=dict(frequency_hz=4.1, damping=0.02, resonant=True))]))
+    (run / 'vibration_data' / 'cameras.json').write_text(json.dumps([dict(
+        camera_id='c1', picks=dict(quality='P and S', delay_p_s=2.0, delay_s_s=2.2))]))
+    out = str(tmp_path / 'catalog')
+    monkeypatch.setitem(calibrate.QUALITY, 'min_height_px', 360)       # the synthetic video is 640 x 360
+    calibrate.calibrate(str(tmp_path / 'clips.csv'), str(tmp_path), out, [str(run)])
+    (c,) = json.load(open(os.path.join(out, 'catalog.json')))['cameras']
+    assert c['day']['usable'] and not c['day']['problems']
+    assert not c['night']['usable'] and {'dark', 'frozen'} <= set(c['night']['problems'])
+    assert c['touring'] is False and c['vibration_usable']
+    assert abs(c['ambient']['frequency_hz'] - 4.0) < 0.2
+    assert 'an ambient peak' in c['notes'][0]
+    assert c['stream_delay_s'] == dict(median=2.1, n=1) and c['resonant_at_events']
+    assert os.path.exists(os.path.join(out, c['figure']))
+    rows = list(csv.DictReader(open(os.path.join(out, 'catalog.csv'))))
+    assert rows[0]['ambient_frequency_hz'] == '4.0' and rows[0]['stream_delay_s'] == '2.1'

@@ -29,7 +29,8 @@ videos.csv + videos + event.json
   -> eqcam report    survey.csv, survey.json, map.html (Leaflet), map.png
 ```
 
-`eqcam run` does all three. The Claude Code skill in `.claude/skills/eqcam/` runs the same steps and can also do
+`eqcam run` does all three. Outside events, `eqcam calibrate` builds a catalog of the cameras from routine clips
+(see [Calibration](#calibration-before-events)). The Claude Code skill in `.claude/skills/eqcam/` runs the same steps and can also do
 the review in the session itself (no API key), for testing: see [Testing with the Claude Code
 skill](#testing-with-the-claude-code-skill).
 
@@ -226,6 +227,39 @@ detections (`#t=start,end`: the `video_window_s` of the review record if set, el
 else the predicted P and S arrivals) and at the times of the frames; `survey.csv` has the same window. The panels
 (filter, legend) fold with a tap on their header, and start folded on phones (narrow or touch screens); they hide
 while a popup is open, and popups are kept within the screen, shown from their top.
+
+## Calibration (before events)
+
+```bash
+eqcam calibrate --clips clips.csv --videos <folder> --out catalog/ [--events runs/*/run]
+```
+
+`clips.csv` lists clips recorded routinely from each camera's stream (a few minutes, by day and by night, on
+calm and windy days): the columns of `videos.csv`, and optionally `clip_id`, `start_s` and `end_s` (the part of
+the video to use) and `wind_mps`. For each clip:
+
+- **quality**: resolution, frame rate, bitrate; brightness, contrast, sharpness (variance of the Laplacian),
+  frozen frames; day, twilight or night from the elevation of the sun at the camera (else the brightness). The
+  bars (`QUALITY` in `calibrate.py`: at least 480 px tall, not dark, not frozen, not blurred; for vibration at
+  least 15 fps, a stable view of 20 s, a steady calm image) are provisional, to be agreed;
+- **views**: fixed or touring presets, and the calm jitter of the image (as in prepare);
+- **ambient vibration**: the spectrum of the image motion in the stable views at the native frame rate (wind and
+  traffic shake the mount); its peaks above the local background (running median over 2 Hz), and the half-power
+  width of the strongest (its damping, when wider than the resolution of 0.125 Hz).
+
+`--events` adds what earlier events measured per camera: the mount's frequency and damping in the shaking, and
+the stream delay from the P and S arrivals (with `report --vibration`). Clips and events accumulate in the
+catalog folder (`clips/<camera_id>/<clip_id>.json`, `events/<event_id>.json`), and every run rebuilds
+`catalog.json`, `catalog.csv` (one row per camera: day and night usable and why not, touring, ambient peaks,
+mount at events, median stream delay, notes) and per camera `calibration/<camera_id>.png` (the ambient spectra
+of its clips, by light, with the mount frequencies of the events). Not yet: the scene inventory (which intensity
+levels a view can constrain, one model call per view), picking windy days from weather data, stream delays from
+burned-in clocks, and `prepare` reading the catalog.
+
+On the 2026-11-20 M3.9 videos (2 min after the shaking, at night), the ambient peaks match the mount at the event
+at Skid Row (2.5 Hz) and at the Caltrans pole (5 Hz, with modes at 1.1 and 2.5 Hz); not at Venice (0.5 min of
+steady view between tours, a weak 1.5 Hz peak; 9.5 Hz at the event) nor at Mount Wilson (3 Hz; 8.4 Hz at the
+event). Calibration needs longer and repeated clips, which routine recordings provide.
 
 ## Notes
 
