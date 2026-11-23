@@ -121,3 +121,10 @@ the dominant frequency, whether the mount resonates, the roll, and the objects f
 that displacements are in pixels (they depend on the zoom, the distance and the mount: compare frequencies and
 shapes, not amplitudes); and look at a few `vibration.png` before relying on the objects: a patch that a car,
 a person or a light change crosses can still pass the checks.
+
+The same step picks the P and S arrivals in each camera's motion: `arrivals.html` (the cameras by the quality
+of their picks, "P and S", "S only" or "ambiguous"; per camera `arrivals.png` with the picks and the spectra of
+the noise, P and S windows; `arrivals_summary.png`, S-P against the distance and the stream delays) and the data
+for further analysis in `vibration_data/` and `vibration_data.zip` (motion and spectra CSV per camera,
+`cameras.json`, a README). Tell the user the picks, S-P against the expected, and the stream delays (each pick
+minus its predicted arrival; P and S must agree); P is often too weak near the source.

@@ -166,7 +166,8 @@ backend. If `eqcam` is not installed in the environment, the skill runs it from 
 - `findings/<stage>/<id>.json`: `{camera_id, stage, reviewed_by, model, reviewed_at, latency_s, usage, error,
   findings}`, and optionally `video_window_s: [start, end]` (s of the video) set by the reviewer
 - `survey.csv`, `survey.json`, `map.html`, `map.png`; with `--vibration`, `vibration.html`, `vibration_summary.png`
-  and per camera `vibration.png`, `vibration.json`, `vibration.npz`
+  and per camera `vibration.png`, `vibration.json`, `vibration.npz`; `arrivals.html`, `arrivals_summary.png`,
+  per camera `arrivals.png`, and the data in `vibration_data/` (and `vibration_data.zip`)
 
 **The image motion is not the ground motion.** It is the ground motion filtered by the camera's mount (a pole, a
 mast, a bracket, the building) and scaled by the zoom. `eqcam prepare` re-decodes the shaking and its ring-down
@@ -192,6 +193,21 @@ objects), `vibration.json` and `vibration.npz` (the series), and `vibration.html
 vibration, the figures in the popups) and `vibration_summary.png` (the dominant frequencies against the distance,
 the spectra of the cameras); `map.html` links them. Displacements are in pixels: compare frequencies and shapes
 across cameras, not amplitudes. It adds about 5 s per camera.
+
+**P and S arrivals and the data (with `--vibration`).** In each camera's motion (one-frame glitches removed,
+0.5-12 Hz), the onsets are the sharp rises of the motion energy; P and S are the pair of onsets whose interval
+fits the expected S-P time (Vp 6, Vs 3.5 km/s, from the hypocentral distance), with P clear of the noise and S
+stronger; otherwise S is the strongest onset. Each camera is labeled "P and S", "S only" or "ambiguous", and each
+pick minus its predicted arrival gives the delay of the stream (the S-P time does not depend on it; the two
+delays must agree). `arrivals.html` maps the cameras by the quality of their picks, with per camera
+`arrivals.png` (the motion with the picks; the spectra of the noise, P and S windows) and its data;
+`arrivals_summary.png` has S-P against the distance and the stream delays. `vibration_data/` (zipped too) has,
+for further analysis, per camera the motion (`<id>_motion.csv`: video time, UTC as received, across, down, roll,
+scale) and the spectra (`<id>_spectra.csv`), the motion of vibrating objects if any, `cameras.json` (locations,
+distances, frame rates, pixel scales, mounts, picks, delays), `event.json` and a README. P is weak in cameras
+near the source (it arrives steeply, mostly vertical) and the spectra show the mounts. On the 2026-11-20 M3.9:
+P and S at Venice (S-P 3.97 s, expected 3.84), Mount Wilson and the Caltrans pole; S only at Skid Row; stream
+delays 1.6-6.9 s.
 
 **People are blurred** before the frames are published or shared: the review returns `people_boxes` (a box around
 every person or group, 0-1000 of the tile) with its findings, at no extra cost, and `eqcam report` pixelates and

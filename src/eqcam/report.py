@@ -123,6 +123,7 @@ def write_table(rows, event, out):
               'severity', 'confidence', 'camera_status', 'shaking_visible', 'intensity_mmi',
               'mmi_kind', 'mmi_confidence', *DETECTIONS, 'summary',
               'motion_brief', 'people_blurred', 'vibration_frequency_hz', 'vibration_objects',
+              'arrival_quality', 'p_arrival_s', 's_arrival_s', 'stream_delay_s',
               'video_start_s', 'video_end_s', 'video_window', 'video_url']
     with open(os.path.join(out, 'survey.csv'), 'w', newline='') as f:
         w = csv.writer(f)
@@ -134,6 +135,10 @@ def write_table(rows, event, out):
             vals = dict(r, motion_brief='; '.join(items_of(r)),
                         vibration_frequency_hz=(vib.get('camera') or {}).get('frequency_hz'),
                         vibration_objects=len(vib['objects']) if vib else None,
+                        arrival_quality=(r.get('arrivals') or {}).get('quality'),
+                        p_arrival_s=(r.get('arrivals') or {}).get('p_s'),
+                        s_arrival_s=(r.get('arrivals') or {}).get('s_s'),
+                        stream_delay_s=(r.get('arrivals') or {}).get('delay_s_s'),
                         video_start_s=win[0], video_end_s=win[1], video_window=win[2],
                         flags='; '.join(r.get('flags', [])), reviewed_by=rec.get('reviewed_by'),
                         model=rec.get('model'), review_error=rec.get('error'), confidence=fd.get('confidence'),
@@ -226,8 +231,10 @@ def popup(r):
     if links := video_links(r):
         parts.append(f'<div>{links}</div>')
     if (r.get('vibration') or {}).get('plot'):
+        arr = (f" &middot; <a href=\"{e(r['arrivals']['plot'])}\" target=\"_blank\">arrivals</a> "
+               f"({e(r['arrivals']['quality'])}, <a href=\"arrivals.html\">map</a>)" if r.get('arrivals') else '')
         parts.append(f"<div>Vibration: <a href=\"{e(r['vibration']['plot'])}\" target=\"_blank\">figure</a> &middot; "
-                     f'<a href="vibration.html">map</a></div>')
+                     f'<a href="vibration.html">map</a>{arr}</div>')
     if details:
         parts.append('<details><summary>Details</summary>' + '<br>'.join(details) + '</details>')
     if r.get('tile'):

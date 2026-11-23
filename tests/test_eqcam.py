@@ -4,6 +4,7 @@ a fake backend"""
 
 import csv
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -16,7 +17,7 @@ import pytest
 from PIL import Image
 from scipy import ndimage
 
-from eqcam import backends, frames, mask, report, review, schema, vibration
+from eqcam import arrivals, backends, frames, mask, report, review, schema, vibration
 
 FPS, H, W = 30, 360, 640
 
@@ -418,3 +419,23 @@ def test_vibration_finds_an_object(tmp_path):
     vibration.summary_png(rows, dict(event_id='test', lat=34.05, lon=-118.05), out)
     vibration.map_html(rows, dict(event_id='test', lat=34.05, lon=-118.05), out)
     assert os.path.exists(os.path.join(out, 'vibration.html'))
+
+
+def test_arrivals():
+    """A weak 8 Hz P and a strong S 3.0 s later (the expected S-P), behind a stream delay of 5.8 s: P and S, the
+    delay from both; a one-frame glitch does not count; without the P, S only"""
+    fps, rng = 30.0, np.random.default_rng(2)
+    t = np.arange(int(25 * fps)) / fps
+    burst = lambda t0, a, f, tau: a * np.where(t >= t0, np.exp(-(t - t0) / tau), 0) * np.sin(2 * np.pi * f * (t - t0))  # noqa: E731
+    x = np.stack([burst(10, 0.05, 8, 1.5) + burst(13, 0.6, 3, 3), burst(10, 0.03, 7, 1.5) + burst(13, 0.4, 2.5, 3)], 1)
+    x += rng.normal(0, 0.002, x.shape)
+    x[150] += 0.8                                                        # a glitch at 5 s
+    hypo = 3.0 / (1 / frames.VS - 1 / frames.VP)
+    m = dict(camera_id='c', distance_km=math.sqrt(hypo ** 2 - 100), predicted_p_s=hypo / frames.VP,
+             predicted_s_s=hypo / frames.VS, flags=[])
+    p, _, _ = arrivals.pick(t, x, fps, m, dict(depth_km=10))
+    assert p['quality'] == 'P and S' and abs(p['p_s'] - 10) < 0.2 and abs(p['s_s'] - 13) < 0.2
+    assert abs(p['delay_s_s'] - (13 - m['predicted_s_s'])) < 0.2 and abs(p['delay_p_s'] - p['delay_s_s']) < 0.3
+    x[:, :] = np.stack([burst(13, 0.6, 3, 3), burst(13, 0.4, 2.5, 3)], 1) + rng.normal(0, 0.002, x.shape)
+    p, _, _ = arrivals.pick(t, x, fps, m, dict(depth_km=10))
+    assert p['quality'] == 'S only' and abs(p['s_s'] - 13) < 0.2 and p['p_s'] is None

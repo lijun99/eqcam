@@ -542,6 +542,8 @@ def prepare_camera(cam, videos, outdir, event, motion_fps=15.0, motion_width=320
         m['distance_km'] = round(distance_km(event['lat'], event['lon'], cam['lat'], cam['lon']), 1)
     if cam.get('video_url'):
         m['video_url'] = cam['video_url']
+    if cam.get('start_utc'):
+        m['start_utc'] = cam['start_utc']
     video = os.path.join(videos, cam['video']) if cam.get('video') else ''
     if not video or not os.path.exists(video):
         m['flags'].append('no_video')

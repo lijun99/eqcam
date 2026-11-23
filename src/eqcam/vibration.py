@@ -31,6 +31,7 @@ import numpy as np
 from PIL import Image
 from scipy import signal
 
+from .arrivals import arrivals as pick_arrivals
 from .frames import decode_small, image_shifts, video_fps
 from .report import BASEMAPS_JS, FIT_JS, PANEL_CSS, PANEL_JS, title_of
 
@@ -468,6 +469,7 @@ def vibration(out, rows, event):
     done = [r for r in rows if r.get('vibration')]
     summary_png(rows, event, out)
     map_html(rows, event, out)
+    pick_arrivals(out, rows, event)
     print(f'vibration: {len(done)} cameras analyzed, '
           f"{sum(len(r['vibration']['objects']) for r in done)} vibrating objects -> {out}/vibration.html")
     return rows
