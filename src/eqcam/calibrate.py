@@ -272,9 +272,8 @@ def event_record(run):
             c['distance_km'] = round(distance_km(event['lat'], event['lon'], m['lat'], m['lon']), 1)
         p = picks.get(m['camera_id'])
         if p:
-            delays = [v for v in (p.get('delay_p_s'), p.get('delay_s_s')) if v is not None]
-            c.update(arrival_quality=p.get('quality'),
-                     stream_delay_s=round(float(np.mean(delays)), 2) if delays else None)
+            c.update(arrival_quality=p.get('quality'), stream_delay_s=p.get('delay_s_s'),    # from S: P is often late
+                     p_late_s=p.get('p_late_s'))
         cams[m['camera_id']] = c
     eid = event.get('event_id') or os.path.basename(os.path.dirname(os.path.abspath(run)))
     return dict(event_id=eid, magnitude=event.get('magnitude'), origin_utc=event.get('origin_utc'), cameras=cams)

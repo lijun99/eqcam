@@ -27,7 +27,9 @@ from scipy import fft, ndimage, signal
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt                     # noqa: E402
 
-VP, VS = 6.0, 3.5                                   # km/s, for the predicted arrivals
+# km/s, for the predicted arrivals: apparent velocities (hypocentral distance / travel time) at 15-30 km in the
+# Los Angeles area, from the catalog picks of the stations near the cameras (2026-11-20 M3.9; Vp/Vs about 1.8)
+VP, VS = 5.7, 3.1
 RANK = {'high': 0, 'normal': 1, 'low': 2}
 
 
@@ -558,7 +560,7 @@ def prepare_camera(cam, videos, outdir, event, motion_fps=15.0, motion_width=320
     if t0 and event and event.get('origin_utc') and 'distance_km' in m:
         hypo = math.hypot(m['distance_km'], event.get('depth_km') or 10.0)
         origin = (parse_time(event['origin_utc']) - t0).total_seconds()
-        m['predicted_p_s'], m['predicted_s_s'] = round(origin + hypo / VP, 1), round(origin + hypo / VS, 1)
+        m['predicted_p_s'], m['predicted_s_s'] = round(origin + hypo / VP, 2), round(origin + hypo / VS, 2)
         lo_s, hi_s = m['predicted_p_s'] - 30, m['predicted_s_s'] + 120
         if hi_s < 0 or lo_s > duration:
             m['flags'].append('predicted_arrivals_outside_the_video')

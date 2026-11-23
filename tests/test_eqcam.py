@@ -424,8 +424,9 @@ def test_vibration_finds_an_object(tmp_path):
 
 
 def test_arrivals():
-    """A weak 8 Hz P and a strong S 3.0 s later (the expected S-P), behind a stream delay of 5.8 s: P and S, the
-    delay from both; a one-frame glitch does not count; without the P, S only"""
+    """A weak 8 Hz P and a strong S 3.0 s later (the expected S-P), behind a stream delay: P and S, the delay from
+    S, P on time; a one-frame glitch does not count; P 0.7 s late (S-P short): still P and S, noted late; without
+    the P, S only"""
     fps, rng = 30.0, np.random.default_rng(2)
     t = np.arange(int(25 * fps)) / fps
     burst = lambda t0, a, f, tau: a * np.where(t >= t0, np.exp(-(t - t0) / tau), 0) * np.sin(2 * np.pi * f * (t - t0))  # noqa: E731
@@ -437,7 +438,10 @@ def test_arrivals():
              predicted_s_s=hypo / frames.VS, flags=[])
     p, _, _ = arrivals.pick(t, x, fps, m, dict(depth_km=10))
     assert p['quality'] == 'P and S' and abs(p['p_s'] - 10) < 0.2 and abs(p['s_s'] - 13) < 0.2
-    assert abs(p['delay_s_s'] - (13 - m['predicted_s_s'])) < 0.2 and abs(p['delay_p_s'] - p['delay_s_s']) < 0.3
+    assert abs(p['delay_s_s'] - (13 - m['predicted_s_s'])) < 0.2 and abs(p['p_late_s']) < 0.3 and not p['notes']
+    late = np.stack([burst(10.7, 0.05, 8, 1.5) + burst(13, 0.6, 3, 3), burst(10.7, 0.03, 7, 1.5) + burst(13, 0.4, 2.5, 3)], 1)
+    p, _, _ = arrivals.pick(t, late + rng.normal(0, 0.002, x.shape), fps, m, dict(depth_km=10))
+    assert p['quality'] == 'P and S' and abs(p['p_late_s'] - 0.7) < 0.2 and 'later than the S delay' in p['notes'][0]
     x[:, :] = np.stack([burst(13, 0.6, 3, 3), burst(13, 0.4, 2.5, 3)], 1) + rng.normal(0, 0.002, x.shape)
     p, _, _ = arrivals.pick(t, x, fps, m, dict(depth_km=10))
     assert p['quality'] == 'S only' and abs(p['s_s'] - 13) < 0.2 and p['p_s'] is None
@@ -488,10 +492,10 @@ def test_calibrate(tmp_path, monkeypatch):
     assert c['touring'] is False and c['vibration_usable']
     assert abs(c['ambient']['frequency_hz'] - 4.0) < 0.2
     assert 'an ambient peak' in c['notes'][0]
-    assert c['stream_delay_s'] == dict(median=2.1, n=1) and c['resonant_at_events']
+    assert c['stream_delay_s'] == dict(median=2.2, n=1) and c['resonant_at_events']
     assert os.path.exists(os.path.join(out, c['figure']))
     rows = list(csv.DictReader(open(os.path.join(out, 'catalog.csv'))))
-    assert rows[0]['ambient_frequency_hz'] == '4.0' and rows[0]['stream_delay_s'] == '2.1'
+    assert rows[0]['ambient_frequency_hz'] == '4.0' and rows[0]['stream_delay_s'] == '2.2'
     # the periodic cycle: record each stream (here a file, which ffmpeg reads as it would a stream; and one
     # that does not exist), calibrate, and report the changes; then the first camera goes offline
     streams = tmp_path / 'streams.csv'

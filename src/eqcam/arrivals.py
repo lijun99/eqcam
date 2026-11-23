@@ -4,11 +4,12 @@
 From the motion of each camera (vibration.npz: the shaking and its ring-down at the frame rate of the video):
 one-frame glitches are removed, the motion is band-passed (0.5-12 Hz) and its energy (velocity squared)
 computed. The onsets are the peaks of the rise of the log energy over 0.3 s (up to the peak of the motion),
-each timed where its rise starts. P and S are the pair of onsets whose interval fits the expected S-P time,
-with P clear of the noise (SNR >= 3) and S stronger than P; without such a pair, S is the strongest onset. The S-P time does not depend on the delay of the
-stream; each pick minus its predicted arrival gives that delay, and the two must agree. Each camera is
-labeled "P and S", "S only" or "ambiguous" (a weak onset, a view that starts during the shaking, or a first
-arrival that does not fit).
+each timed where its rise starts. P and S are the pair of onsets whose interval fits the expected S-P time
+(down to 25 % shorter: P starts small and is picked where it clears the noise, often late), with P clear of the
+noise (SNR >= 3) and S stronger than P; without such a pair, S is the strongest onset. The stream delay is the S
+pick minus its predicted arrival; P minus its own is given too, and its excess over the S delay is how late P
+was picked. Each camera is labeled "P and S", "S only" or "ambiguous" (a weak onset, a view that starts during
+the shaking, or a first arrival that does not fit).
 
 Writes per camera cameras/<id>/arrivals.png, the map arrivals.html (the cameras by the quality of their picks,
 the plots and the data in the popups) and arrivals_summary.png (S-P against the distance; the stream delays),
@@ -17,7 +18,12 @@ down, roll, scale) and the spectra (CSV: the whole window, the noise, P and S wi
 cameras, their mounts, the picks and the delays) and a README.
 
 The camera motion is the camera's (its mount, its zoom), not the ground's: P is weak where it arrives steeply
-(mostly vertical), and the spectra show the mount's resonance (see eqcam.frames.mount_response).
+(mostly vertical), and the spectra are the mount's response (see eqcam.frames.mount_response), not the ground
+motion's: at the 2026-11-20 M3.9 event their shapes did not match those of the nearby seismic stations, even 130 m
+away. And the picks are uncertain by about 1 s or more: the motion has several onsets, and which pair is P and S
+depends on the expected S-P (the stream delays from the picks and from the envelopes cross-correlated with the
+stations differed by 0.5-1.5 s). Use the mount frequencies, and the picks as rough times; not the spectra as
+ground motion.
 """
 
 import csv
@@ -45,7 +51,9 @@ P_COLOR, S_COLOR = SERIES[2], SERIES[7]
 
 MIN_S_RISE = 1.0        # S: the log energy rises by this much over 0.3 s (a factor e)
 P_SNR = 3.0             # P: its rms velocity over the noise's
-SP_TOLERANCE = 0.15     # P kept if |S-P - expected| <= max(0.35 s, this fraction of the expected)
+SP_SHORT = 0.25         # P kept if S-P is at most this fraction (or 0.35 s) shorter than expected (P picked late)
+SP_LONG = 0.15          # ... or at most this fraction (or 0.35 s) longer
+P_LATE_NOTE_S = 0.3     # the P delay exceeds the S delay by more: noted (P picked late)
 
 
 def despike(x, factor=8.0):
@@ -66,6 +74,17 @@ def expected_sp(m, event):
     return hypo, hypo / VS - hypo / VP
 
 
+def predicted(m, event):
+    """The predicted P and S arrivals (s of the video) with the current VP and VS (a run prepared with other
+    velocities is brought up to date), or those of prepare"""
+    t0, origin = parse_time(m.get('start_utc')), parse_time((event or {}).get('origin_utc'))
+    if t0 is None or origin is None or m.get('distance_km') is None:
+        return m.get('predicted_p_s'), m.get('predicted_s_s')
+    hypo, _ = expected_sp(m, event)
+    o = (origin - t0).total_seconds()
+    return round(o + hypo / VP, 2), round(o + hypo / VS, 2)
+
+
 def pick(t, x, fps, m, event):
     """The P and S picks in the camera motion x (n x 2, px) at times t (s of the video)"""
     hypo, sp = expected_sp(m, event)
@@ -81,12 +100,12 @@ def pick(t, x, fps, m, event):
     i_max = int(np.argmax(env))
     lo = int(fps)
     out = dict(hypo_km=round(hypo, 1), sp_expected_s=round(sp, 2), quality='ambiguous', s_s=None, p_s=None,
-               p_snr=None, s_rise=None, delay_s_s=None, delay_p_s=None, notes=[])
+               p_snr=None, s_rise=None, delay_s_s=None, delay_p_s=None, p_late_s=None, notes=[])
     if i_max <= lo:
         out['notes'].append('the motion peaks at the start of the window')
         return out, xf, e
     noise = float(e[:int(fps)].mean()) + 1e-12
-    fits = lambda d: abs(d - sp) <= max(0.35, SP_TOLERANCE * sp)        # noqa: E731
+    fits = lambda d: sp - max(0.35, SP_SHORT * sp) <= d <= sp + max(0.35, SP_LONG * sp)     # noqa: E731
     level = lambda i, j: float(np.sqrt(e[i:j].mean() / noise)) if j > i else 0.0   # noqa: E731
     def onset(k):
         """The onset of the rise peaking at k: where the rise reaches half its peak (the energy is smoothed over
@@ -104,8 +123,9 @@ def pick(t, x, fps, m, event):
     best, i_p, i_s = None, None, i_c
     for i in peaks:
         for j in peaks[peaks > i]:
-            if fits(t[j] - t[i]) and rise[j] >= MIN_S_RISE and level(i, j) >= P_SNR \
-                    and level(j, j + int(2 * fps)) > 1.5 * level(i, j):
+            js = onset(j)                                   # P's level up to where S starts, not into S
+            if fits(t[j] - t[i]) and rise[j] >= MIN_S_RISE and level(i, js) >= P_SNR \
+                    and level(j, j + int(2 * fps)) > 1.5 * level(i, js):
                 score = rise[i] + rise[j]
                 if best is None or score > best:
                     best, i_p, i_s = score, int(i), int(j)
@@ -119,7 +139,7 @@ def pick(t, x, fps, m, event):
             out['quality'] = 'S only'
     out.update(s_s=round(float(t[onset(i_s)]), 2), s_rise=round(float(rise[i_s]), 2))
     if i_p is not None:
-        out.update(p_s=round(float(t[onset(i_p)]), 2), p_snr=round(level(i_p, i_s), 1), quality='P and S')
+        out.update(p_s=round(float(t[onset(i_p)]), 2), p_snr=round(level(i_p, onset(i_s)), 1), quality='P and S')
     if rise[i_s] < MIN_S_RISE:
         out['quality'] = 'ambiguous'
         out['notes'].append('the S onset is not sharp')
@@ -130,6 +150,11 @@ def pick(t, x, fps, m, event):
         out['delay_s_s'] = round(out['s_s'] - m['predicted_s_s'], 2) if m.get('predicted_s_s') is not None else None
         if out['p_s'] is not None and m.get('predicted_p_s') is not None:
             out['delay_p_s'] = round(out['p_s'] - m['predicted_p_s'], 2)
+            if out['delay_s_s'] is not None:
+                out['p_late_s'] = round(out['delay_p_s'] - out['delay_s_s'], 2)
+                if out['p_late_s'] > P_LATE_NOTE_S:
+                    out['notes'].append(f"P picked {out['p_late_s']:.1f} s later than the S delay predicts (P is "
+                                        'small at its onset, or the pair is not P and S); the delay is from S')
     return out, xf, e
 
 
@@ -182,7 +207,8 @@ def plot(m, t, xf, picks, spec, path, fps):
             axf.semilogy(spec['freq'][1:], p[1:] + 1e-12, color=col, lw=1.4, label=lab)
     axf.set_xlim(0, min(0.45 * fps, 12))
     axf.legend(frameon=False, fontsize=11)
-    axf.set_title('spectra (both axes)', fontsize=12, color=INK, loc='left')
+    axf.set_title("camera motion spectra (the mount's response,\nnot the ground motion's)", fontsize=12, color=INK,
+                  loc='left')
     axf.set_xlabel('frequency, Hz', fontsize=12, color=INK2)
     axf.set_ylabel('px² / Hz', fontsize=12, color=INK2)
     for a in (ax, axf):
@@ -229,21 +255,27 @@ README = """Camera vibration data of an earthquake, from eqcam (https://github.c
 
 event.json        the event (origin time, epicenter, depth, magnitude)
 cameras.json      per camera: location, distances, video frame rate, pixel scale, view, the mount response, the
-                  P and S picks, their quality, the stream delays implied, the files below
+                  P and S picks, their quality, the stream delay (from S; p_late_s: how late P was picked by
+                  the same measure), the predicted arrivals (Vp 5.7, Vs 3.1 km/s), the files below
 <id>_motion.csv   the motion of the camera, from 5 s before the shaking to 15 s after it, in the view of the
                   shaking: video_time_s (s from the first frame of the video), utc_received (UTC of the frame as
                   received by the recorder: later than the ground motion by the stream delay), camera_across_px,
                   camera_down_px (the shift of the image, pixels of the full frame, relative to the first frame
                   of this series), roll_mrad (rotation about the image center), scale_ppm (zoom-like change)
 <id>_objects.csv  if any: the motion of objects vibrating on their own, relative to the camera (px)
-<id>_spectra.csv  power spectra (px^2/Hz, both axes summed, the motion band-passed 0.5-12 Hz): the whole series,
-                  the noise before the arrivals, the P window (P to S) and the S window (3 s from S)
+<id>_spectra.csv  power spectra of the camera motion (px^2/Hz, both axes summed, band-passed 0.5-12 Hz): the
+                  whole series, the noise before the arrivals, the P window (P to S), the S window (3 s from S)
 
 Caveats: the motion is the camera's, not the ground's: it is the ground motion filtered by the camera's mount
 (a pole, a mast, a building: see "mount" in cameras.json, a resonance frequency, ring-down and damping) and
-scaled by the zoom (pixels, not ground units). The frame rate limits the frequencies (up to half of it). The
-times are those of the frames as received: subtract the stream delay (cameras.json, from the picks, when
-available) to compare with seismic data. Automated and unverified.
+scaled by the zoom (pixels, not ground units). The spectra are therefore the mount's response, not ground-motion
+spectra: compared with nearby seismic stations at one event (2026-11-20, M3.9, Los Angeles), their shapes and
+their S/P ratios did not match, even at a station 130 m from the camera. The frame rate limits the frequencies
+(up to half of it). The picks are uncertain by about 1 s or more: the camera motion has several onsets, P starts
+small, and at that event the camera S-P times were 0.3-1 s shorter than the stations', and the stream delays from
+the picks and from the envelopes cross-correlated with the stations differed by 0.5-1.5 s. The times are those of
+the frames as received: subtract the stream delay (cameras.json, from S, when available) to compare with seismic
+data; an independent clock (e.g., one burned into the video) is better. Automated and unverified.
 """
 
 
@@ -259,8 +291,11 @@ def popup(r):
                  f"S {a['s_s'] if a['s_s'] is not None else '-'} s (video time); S-P {sp}, expected "
                  f"{a['sp_expected_s']} s")
     if a['delay_s_s'] is not None:
-        lines.append(f"stream delay: {a['delay_s_s']} s from S"
-                     + (f", {a['delay_p_s']} s from P" if a['delay_p_s'] is not None else ''))
+        lines.append(f"stream delay: {a['delay_s_s']} s (from S)"
+                     + (f"; P picked {a['p_late_s']:+.2f} s from its prediction with that delay"
+                        if a.get('p_late_s') is not None else ''))
+    lines.append("<small>The spectra are the camera mount's response, not the ground motion's; the picks are "
+                 'uncertain by about 1 s or more.</small>')
     if a['notes']:
         lines.append(f"<small>{e('; '.join(a['notes']))}</small>")
     plot_path = e(a['plot'])
@@ -298,7 +333,7 @@ def summary_png(rows, event, out):
         labeled.add('S')
         if a['delay_p_s'] is not None:
             a2.scatter(a['delay_p_s'], i, s=50, marker='D', color=P_COLOR, ec='white', lw=1, zorder=3,
-                       label=None if 'P' in labeled else 'from P')
+                       label=None if 'P' in labeled else 'from P (P often picked late)')
             labeled.add('P')
     a2.set_yticks(range(len(with_delay)))
     a2.set_yticklabels([f"{r['camera_id']} {r.get('name', '')[:18]}" for r in with_delay], fontsize=11)
@@ -379,6 +414,7 @@ def arrivals(out, rows, event):
         if not r.get('vibration') or not os.path.exists(path):
             continue
         z = np.load(path)
+        r['predicted_p_s'], r['predicted_s_s'] = predicted(r, event)
         t, x = z['t'], z['camera_px'].astype(float)
         fps = float(r['vibration'].get('fps') or 1 / np.median(np.diff(t)))
         picks, xf, _ = pick(t, x, fps, r, event)

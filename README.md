@@ -236,18 +236,24 @@ across cameras, not amplitudes. It adds about 5 s per camera.
 
 **P and S arrivals and the data (with `--vibration`).** In each camera's motion (one-frame glitches removed,
 0.5-12 Hz), the onsets are the sharp rises of the motion energy; P and S are the pair of onsets whose interval
-fits the expected S-P time (Vp 6, Vs 3.5 km/s, from the hypocentral distance), with P clear of the noise and S
-stronger; otherwise S is the strongest onset. Each camera is labeled "P and S", "S only" or "ambiguous", and each
-pick minus its predicted arrival gives the delay of the stream (the S-P time does not depend on it; the two
-delays must agree). `arrivals.html` maps the cameras by the quality of their picks, with per camera
-`arrivals.png` (the motion with the picks; the spectra of the noise, P and S windows) and its data;
-`arrivals_summary.png` has S-P against the distance and the stream delays. `vibration_data/` (zipped too) has,
-for further analysis, per camera the motion (`<id>_motion.csv`: video time, UTC as received, across, down, roll,
-scale) and the spectra (`<id>_spectra.csv`), the motion of vibrating objects if any, `cameras.json` (locations,
-distances, frame rates, pixel scales, mounts, picks, delays), `event.json` and a README. P is weak in cameras
-near the source (it arrives steeply, mostly vertical) and the spectra show the mounts. On the 2026-11-20 M3.9:
-P and S at Venice (S-P 3.97 s, expected 3.84), Mount Wilson and the Caltrans pole; S only at Skid Row; stream
-delays 1.6-6.9 s.
+fits the expected S-P time (Vp 5.7, Vs 3.1 km/s, from the hypocentral distance; down to 25 % shorter, as P starts
+small and is often picked late), with P clear of the noise and S stronger; otherwise S is the strongest onset. Each
+camera is labeled "P and S", "S only" or "ambiguous". The S pick minus its predicted arrival gives the delay of the
+stream; P minus its own is reported as how late P was picked (`p_late_s`). `arrivals.html` maps the cameras by the
+quality of their picks, with per camera `arrivals.png` (the motion with the picks; the spectra of the noise, P and
+S windows) and its data; `arrivals_summary.png` has S-P against the distance and the stream delays.
+`vibration_data/` (zipped too) has, for further analysis, per camera the motion (`<id>_motion.csv`: video time,
+UTC as received, across, down, roll, scale) and the spectra (`<id>_spectra.csv`), the motion of vibrating objects
+if any, `cameras.json` (locations, distances, frame rates, pixel scales, mounts, picks, delays), `event.json` and a
+README.
+
+**What the camera motion is good for.** On the 2026-11-20 M3.9 (Los Angeles), five cameras were compared with the
+nearest seismic stations (0.13-4.6 km): the camera spectra are the mount's response, not ground-motion spectra
+(their shapes and S/P ratios did not match the stations', even 130 m away); the camera S-P times were 0.3-1 s
+short, and the stream delays from the picks and from the envelopes cross-correlated with the stations differed by
+0.5-1.5 s. The envelope of the shaking agreed (peak correlation 0.75-0.94). Use the camera motion for whether and
+roughly when a camera shook, and for its mount frequencies; not for ground spectra, amplitudes or precise picks.
+The velocities above are the stations' apparent ones at that event.
 
 **People are blurred** before the frames are published or shared: the review returns `people_boxes` (a box around
 every person or group, 0-1000 of the tile) with its findings, at no extra cost, and `eqcam report` pixelates and

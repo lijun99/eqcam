@@ -129,8 +129,10 @@ The same step picks the P and S arrivals in each camera's motion: `arrivals.html
 of their picks, "P and S", "S only" or "ambiguous"; per camera `arrivals.png` with the picks and the spectra of
 the noise, P and S windows; `arrivals_summary.png`, S-P against the distance and the stream delays) and the data
 for further analysis in `vibration_data/` and `vibration_data.zip` (motion and spectra CSV per camera,
-`cameras.json`, a README). Tell the user the picks, S-P against the expected, and the stream delays (each pick
-minus its predicted arrival; P and S must agree); P is often too weak near the source.
+`cameras.json`, a README). Tell the user the picks, S-P against the expected, and the stream delays (the S pick
+minus its predicted arrival; `p_late_s`, how late P was picked); P is often weak or late. Say that the picks are
+uncertain by about 1 s or more and the camera spectra are the mounts' response, not ground-motion spectra
+(compared with seismic stations, they did not match): use them for the mounts, not as ground motion.
 
 ## 5. Camera survey and calibration (periodic, outside events)
 
