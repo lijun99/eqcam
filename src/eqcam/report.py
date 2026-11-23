@@ -246,6 +246,28 @@ def title_of(event):
     return ' - '.join(str(event[k]) for k in ('event_id', 'place') if event.get(k)) or 'camera survey'
 
 
+def event_popup(event):
+    """The popup of the epicenter: the event, its magnitude, place, origin time and depth, a note, and a link to
+    its page (event.json: url, e.g., the USGS event page, where the magnitude may since have been revised)"""
+    e = html.escape
+    mag = event.get('magnitude')
+    head = ' '.join(x for x in (f"M{mag:g}" if isinstance(mag, (int, float)) else '', event.get('magnitude_type') or '')
+                    if x)
+    lines = [f"<b>{e(', '.join(x for x in (head, event.get('place') or '') if x))}</b>"]
+    when = (event.get('origin_utc') or '').replace('T', ' ').rstrip('Z')[:19]
+    if when:
+        depth = event.get('depth_km')
+        lines.append(f'{e(when)} UTC' + (f', depth {depth:g} km' if depth is not None else ''))
+    if event.get('note'):
+        lines.append(e(event['note']))
+    if event.get('event_id'):
+        lines.append(f"<span style=\"color:#52514e\">{e(event['event_id'])}</span>")
+    if event.get('url'):
+        lines.append(f'<a href="{e(event["url"])}" target="_blank" rel="noopener">Event page (latest magnitude and '
+                     f'location)</a>')
+    return '<div class="pop">' + '<br>'.join(lines) + '</div>'
+
+
 def map_html(rows, event, out):
     points = [dict(lat=r['lat'], lon=r['lon'], color=COLORS.get(r['severity'], COLORS[None]), label=r['camera_id'],
                    popup=popup(r), tags=tags(r)) for r in rows if r.get('lat') is not None]
@@ -317,7 +339,7 @@ function update() {{
     if (match && checked.length && map.hasLayer(p.marker)) p.marker.bringToFront();
   }}
 }}
-if (epi) {{ L.marker(epi).bindPopup({json.dumps(title)}).addTo(map); bounds.push(epi); }}
+if (epi) {{ L.marker(epi).bindPopup({json.dumps(event_popup(event))}).addTo(map); bounds.push(epi); }}
 {FIT_JS}const legend = L.control({{position: 'bottomright'}});
 legend.onAdd = () => {{ const d = L.DomUtil.create('div', 'legend');
   d.innerHTML = '<div class="ph">Legend</div><div class="pb">' + {json.dumps(legend)} + '</div>';

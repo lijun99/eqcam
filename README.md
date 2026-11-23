@@ -90,7 +90,9 @@ the maps, refresh the demo: `python examples/demo.py --out <folder>`, then copy 
 | `start_utc` | optional: ISO time of the first frame; with the event, the shaking is searched near the predicted P and S arrivals |
 | `video_url` | optional: the video online; the map links to it (never to the local file) |
 
-`event.json`: `event_id`, `origin_utc`, `lat`, `lon`, `depth_km`, `magnitude`, `place` (only `event_id` required).
+`event.json`: `event_id`, `origin_utc`, `lat`, `lon`, `depth_km`, `magnitude`, `place` (only `event_id` required); optionally `magnitude_type`, `note` and `url`
+(the event page, e.g., USGS: the magnitude and location may be revised after the alert). The epicenter's popup
+on every map shows them, with the link.
 
 ## Backends
 

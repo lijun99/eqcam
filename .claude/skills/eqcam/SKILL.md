@@ -15,7 +15,10 @@ ffprobe; the API backends also need `pip install "eqcam[claude]"` or `"eqcam[gem
   and optionally `start_utc` (ISO time of the first frame), `view` (what the camera looks at) and `video_url`
   (the video online, linked from the map). With `start_utc` and the event, the shaking is searched near the
   predicted arrivals.
-- **event.json**: `event_id, origin_utc, lat, lon, depth_km, magnitude, place` (only `event_id` required).
+- **event.json**: `event_id, origin_utc, lat, lon, depth_km, magnitude, place` (only `event_id` required), and
+  optionally `magnitude_type`, `note` and `url` (the event page, e.g., USGS). The alert's first magnitude is often
+  revised: when the event is in a catalog, set `url` and use the catalog's magnitude (check it again before
+  republishing).
 - If the server's list has another layout, write a small conversion to this CSV. Never modify the videos.
 
 ## 1. Prepare

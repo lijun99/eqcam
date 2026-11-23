@@ -33,7 +33,7 @@ import numpy as np
 from scipy import ndimage, signal
 
 from .frames import VP, VS, parse_time
-from .report import BASEMAPS_JS, FIT_JS, PANEL_CSS, PANEL_JS, title_of
+from .report import BASEMAPS_JS, FIT_JS, PANEL_CSS, PANEL_JS, event_popup, title_of
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt                     # noqa: E402
@@ -346,7 +346,7 @@ for (const p of points) {{
     .bindPopup(p.popup, popupOptions(480)).bindTooltip(p.label).addTo(map);
   bounds.push([p.lat, p.lon]);
 }}
-if (epi) {{ L.marker(epi).bindPopup({json.dumps(title)}).addTo(map); bounds.push(epi); }}
+if (epi) {{ L.marker(epi).bindPopup({json.dumps(event_popup(event))}).addTo(map); bounds.push(epi); }}
 {FIT_JS}const legend = L.control({{position: 'bottomright'}});
 legend.onAdd = () => {{ const d = L.DomUtil.create('div', 'box');
   d.innerHTML = '<div class="ph">P and S picks</div><div class="pb">' + {json.dumps(legend)} + '</div>';
