@@ -387,6 +387,46 @@ def test_mount_response():
                                                  ringing_to_end=False, resonant=True))
 
 
+def test_linearity():
+    """A mount ringing (a sine) and a mount driven by random shaking are linear; one-sided kicks with a quick
+    return (free play) are impulsive"""
+    fps = 30.0
+    t = np.arange(int(16 * fps)) / fps
+    rng = np.random.default_rng(1)
+    ring = np.stack([np.sin(2 * np.pi * 6 * t), 0.5 * np.cos(2 * np.pi * 6 * t)], 1) * 2.0
+    assert not frames.linearity(ring, fps)['impulsive']
+    shaking = vibration.highpass(rng.normal(0, 0.5, (len(t), 2)), fps)
+    lin = frames.linearity(shaking, fps)
+    assert not lin['impulsive'] and abs(lin['skewness']) < 0.5
+    kicks = np.zeros((len(t), 2))
+    for t0 in np.arange(1.0, 15.0, 0.8):                      # a jump within a frame, back in about 0.15 s
+        after = t - t0
+        kicks[:, 0] += np.where(after >= 0, 3.0 * np.exp(-after / 0.15), 0.0)
+    kicks += rng.normal(0, 0.03, kicks.shape)
+    lin = frames.linearity(vibration.highpass(kicks, fps), fps)
+    assert lin['impulsive'] and lin['kicks'] >= 15 and lin['skewness'] > 1
+    assert 'kicks' in frames.linearity_text(lin) and frames.linearity_text(frames.linearity(ring, fps)) == ''
+
+
+def test_fit_camera_robust():
+    """A few patches that lose their match in some frames (dark noise at night) do not pull the camera's motion,
+    nor make a false roll"""
+    rng = np.random.default_rng(2)
+    n, nx, ny = 200, 10, 6
+    centers = np.array([(x, y) for y in np.linspace(-150, 150, ny) for x in np.linspace(-280, 280, nx)], float)
+    cam = np.stack([np.sin(np.arange(n) / 3.0), 0.5 * np.cos(np.arange(n) / 4.0)], 1)       # across, down
+    local = np.repeat(cam[:, None, ::-1], len(centers), axis=1) + rng.normal(0, 0.02, (n, len(centers), 2))
+    bad = np.arange(50, 60)                                   # the bottom row: noise, wild in a third of the frames
+    wild = rng.random((n, len(bad))) < 0.3
+    local[:, bad] += np.where(wild[:, :, None], rng.uniform(-30, 30, (n, len(bad), 2)), 0)
+    use = np.ones(len(centers), bool)
+    params, pred, w = vibration.fit_camera(local.astype(np.float32), centers, use)
+    assert np.abs(params[:, :2] - cam).max() < 0.1
+    roll = (params[:, 4] - params[:, 3]) / 2
+    assert np.abs(roll).max() < 1e-3
+    assert (w[:, bad][wild] == 0).mean() > 0.9                # the wild matches rejected
+
+
 def test_vibration_finds_an_object(tmp_path):
     """A camera ringing at 5 Hz, and an object in its view swinging on its own at 2.2 Hz: the camera's frequency,
     and the object, where it is and at its frequency; nothing else"""

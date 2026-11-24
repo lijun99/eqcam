@@ -9,10 +9,13 @@ is checked and measured:
 - the views: fixed, or touring presets (the view changes, as in prepare), and the calm jitter of the image;
 - the ambient vibration of the mount (wind, traffic): the spectrum of the image motion in the stable views, at
   the native frame rate; its peaks, their prominence over the background and the half-power width of the
-  strongest (its damping).
+  strongest (its damping); and its linearity (eqcam.frames.linearity: kicks within a frame, a one-sided motion).
 
-Earlier events add what they measured: the mount's frequency and damping in the shaking, and the stream delay
-from the P and S arrivals (with report --vibration). Each clip's results are kept in clips/<camera_id>/
+Earlier events add what they measured: the mount's frequency and damping in the shaking, whether the motion was
+impulsive (kicks: free play or glitches, not a linear mount), and the stream delay from the P and S arrivals
+(the last two with report --vibration). The ambient spectrum gives a linear mount's frequencies and damping, not
+its gain (the wind's force is unknown), and says nothing of a mount with free play, whose kicks start only above
+some acceleration: the events tell these apart. Each clip's results are kept in clips/<camera_id>/
 <clip_id>.json and each event's in events/<event_id>.json, so calibrating more clips or events adds to the
 catalog, which is rebuilt each time: catalog.json, catalog.csv and per camera calibration/<camera_id>.png (the
 ambient spectra of its clips, with the mount frequencies measured at events), and changes.json (what changed
@@ -36,8 +39,8 @@ import subprocess
 import numpy as np
 from scipy import ndimage, signal
 
-from .frames import (analyze_motion, decode_small, distance_km, frame_differences, image_shifts, parse_time,
-                     read_cameras)
+from .frames import (IMPULSIVE_KICKS_PER_S, IMPULSIVE_KURTOSIS, IMPULSIVE_SKEWNESS, analyze_motion, decode_small,
+                     distance_km, frame_differences, image_shifts, linearity, parse_time, read_cameras)
 from .vibration import INK, MUTED, SERIES, highpass, style
 
 QUALITY = dict(
@@ -126,6 +129,21 @@ def peak_width(fr, p, k):
     return float(sides[1] - sides[0])
 
 
+def ambient_linearity(lins):
+    """The linearity of the ambient motion over the chunks of a clip ((linearity, seconds) each): the kicks
+    per second over all, the largest |skewness| and kurtosis; impulsive by the same bars as in the shaking. Kicks
+    in calm air are glitches of the video, in wind they can be free play: compare with the wind of the clip"""
+    if not lins:
+        return None
+    kicks = sum(lin['kicks'] for lin, _ in lins)
+    per_s = kicks / sum(s for _, s in lins)
+    skew = max((lin['skewness'] for lin, _ in lins), key=abs)
+    kurt = max(lin['kurtosis'] for lin, _ in lins)
+    return dict(kicks=kicks, kicks_per_s=round(per_s, 2), skewness=skew, kurtosis=kurt,
+                impulsive=bool(per_s >= IMPULSIVE_KICKS_PER_S and (abs(skew) >= IMPULSIVE_SKEWNESS
+                                                                    or kurt >= IMPULSIVE_KURTOSIS)))
+
+
 def ambient(video, info, segments, start, max_s=300.0):
     """The ambient vibration of the camera: the image shift (relative to the middle frame of each chunk of a
     stable view) at the native frame rate, high-passed at 0.5 Hz; its spectrum averaged over the chunks; the
@@ -134,7 +152,7 @@ def ambient(video, info, segments, start, max_s=300.0):
     nfft = int(round(NFFT_S * fps))
     h = max(2, int(round(info['height'] * AMBIENT_WIDTH / info['width'] / 2)) * 2)
     scale = info['width'] / AMBIENT_WIDTH
-    psds, used, rms = [], 0.0, []
+    psds, used, rms, lins = [], 0.0, [], []
     for a_s, b_s in segments:
         t = a_s
         while t + NFFT_S <= b_s and used < max_s:
@@ -148,6 +166,9 @@ def ambient(video, info, segments, start, max_s=300.0):
                     np.abs(np.diff(shifts, axis=0)).max() > 8:          # not one steady view
                 continue
             x = highpass(shifts.astype(np.float64) * scale, fps)
+            lin = linearity(x, fps)
+            if lin:
+                lins.append((lin, len(frames) / fps))
             fr, p = signal.welch(x, fps, nperseg=nfft, axis=0)
             psds.append((p.sum(axis=1), len(frames)))
             band = (fr >= 0.5) & (fr <= 0.4 * fps)
@@ -169,7 +190,8 @@ def ambient(video, info, segments, start, max_s=300.0):
                peaks=[dict(frequency_hz=round(float(fb[k]), 2), prominence=round(float(pb[k] / base[k]), 1))
                       for k in ks],
                spectrum=dict(frequency_hz=[round(float(f), 3) for f in fr],
-                             psd_px2_per_hz=[float('%.4g' % v) for v in p]))
+                             psd_px2_per_hz=[float('%.4g' % v) for v in p]),
+               linearity=ambient_linearity(lins))
     if ks:
         k = ks[0]
         f0 = float(fb[k])
@@ -270,6 +292,11 @@ def event_record(run):
                  shaking_detected=m.get('shaking_detected'), mount=m.get('mount'))
         if event.get('lat') is not None and m.get('lat') is not None:
             c['distance_km'] = round(distance_km(event['lat'], event['lon'], m['lat'], m['lon']), 1)
+        vpath = os.path.join(run, 'cameras', m['camera_id'], 'vibration.json')
+        if os.path.exists(vpath):                     # report --vibration: linear mount, or impulsive
+            lin = (json.load(open(vpath)).get('camera') or {}).get('linearity')
+            if lin:
+                c['linearity'] = lin
         p = picks.get(m['camera_id'])
         if p:
             c.update(arrival_quality=p.get('quality'), stream_delay_s=p.get('delay_s_s'),    # from S: P is often late
@@ -341,7 +368,9 @@ def summarize(cam, clips, events):
         s['ambient'] = dict(clips=len(amb), with_peak=len(clear), frequency_hz=_median(freqs),
                             frequency_spread_hz=round(float(np.ptp(freqs)), 2) if freqs else None,
                             damping=_median([a.get('damping') for a in clear if a.get('width_resolved')], 3),
-                            rms_px=_median([a.get('rms_px') for a in amb], 4), peaks=group_peaks(amb))
+                            rms_px=_median([a.get('rms_px') for a in amb], 4), peaks=group_peaks(amb),
+                            impulsive_clips=sum(bool(a['linearity']['impulsive']) for a in amb if a.get('linearity'))
+                            if any(a.get('linearity') for a in amb) else None)     # None: clips measured before
     else:
         s['ambient'] = None
     ev = []
@@ -352,11 +381,13 @@ def summarize(cam, clips, events):
             ev.append(dict(event_id=e['event_id'], magnitude=e.get('magnitude'), distance_km=c.get('distance_km'),
                            shaking_detected=c.get('shaking_detected'), mount_frequency_hz=mount.get('frequency_hz'),
                            mount_damping=mount.get('damping'), resonant=mount.get('resonant'),
+                           impulsive=(c.get('linearity') or {}).get('impulsive'),
                            arrival_quality=c.get('arrival_quality'), stream_delay_s=c.get('stream_delay_s')))
     s['events'] = ev
     delays = [e['stream_delay_s'] for e in ev if e.get('stream_delay_s') is not None]
     s['stream_delay_s'] = dict(median=_median(delays), n=len(delays)) if delays else None
     s['resonant_at_events'] = any(e.get('resonant') for e in ev) if ev else None
+    s['impulsive_at_events'] = any(e.get('impulsive') for e in ev) if ev else None
     notes = []
     peaks = [p['frequency_hz'] for p in (s['ambient'] or {}).get('peaks') or []]
     for e in ev:
@@ -365,6 +396,13 @@ def summarize(cam, clips, events):
             close = [g for g in peaks if near(f, g)]
             notes.append(f"{e['event_id']}: mount at {f:g} Hz, " +
                          (f"an ambient peak ({close[0]:g} Hz)" if close else 'not among the ambient peaks'))
+    imp = [e['event_id'] for e in ev if e.get('impulsive')]
+    if imp:
+        notes.append(f"impulsive in the shaking ({', '.join(imp)}): kicks, not a linear mount; the motion gives "
+                     f"the timing and the envelope, not a correctable mount response")
+    if (s['ambient'] or {}).get('impulsive_clips'):
+        notes.append(f"impulsive ambient motion in {s['ambient']['impulsive_clips']} clip(s): glitches of the "
+                     f"video, or free play if windy")
     if not any(s.get(k) for k in ('day', 'twilight', 'night')) and with_stream:
         notes.append('no clip with known light')
     s['notes'] = notes
@@ -374,8 +412,9 @@ def summarize(cam, clips, events):
 CSV_FIELDS = ['camera_id', 'name', 'lat', 'lon', 'clips', 'uptime', 'latest_clip_utc', 'width', 'height', 'fps',
               'bitrate_kbps', 'day_usable', 'day_problems', 'twilight_usable', 'twilight_problems', 'night_usable',
               'night_problems', 'touring', 'calm_jitter_px', 'vibration_usable', 'vibration_problems',
-              'ambient_frequency_hz', 'ambient_peaks_hz', 'ambient_damping', 'ambient_rms_px', 'events',
-              'resonant_at_events', 'mount_frequency_at_events_hz', 'stream_delay_s', 'notes']
+              'ambient_frequency_hz', 'ambient_peaks_hz', 'ambient_damping', 'ambient_rms_px',
+              'ambient_impulsive_clips', 'events', 'resonant_at_events', 'impulsive_at_events',
+              'mount_frequency_at_events_hz', 'stream_delay_s', 'notes']
 
 
 def csv_row(s):
@@ -390,8 +429,9 @@ def csv_row(s):
                 touring=s['touring'], calm_jitter_px=s['calm_jitter_px'], vibration_usable=s['vibration_usable'],
                 vibration_problems='; '.join(s['vibration_problems']), ambient_frequency_hz=amb.get('frequency_hz'),
                 ambient_peaks_hz=' '.join(f"{p['frequency_hz']:g}" for p in amb.get('peaks') or []),
-                ambient_damping=amb.get('damping'), ambient_rms_px=amb.get('rms_px'), events=len(s['events']),
-                resonant_at_events=s['resonant_at_events'],
+                ambient_damping=amb.get('damping'), ambient_rms_px=amb.get('rms_px'),
+                ambient_impulsive_clips=amb.get('impulsive_clips'), events=len(s['events']),
+                resonant_at_events=s['resonant_at_events'], impulsive_at_events=s['impulsive_at_events'],
                 mount_frequency_at_events_hz=' '.join(str(e['mount_frequency_hz']) for e in s['events']
                                                       if e.get('mount_frequency_hz')),
                 stream_delay_s=(s['stream_delay_s'] or {}).get('median'), notes='; '.join(s['notes']))
@@ -497,6 +537,8 @@ def changes_of(old, new):
     fa, fb = (old.get('ambient') or {}).get('frequency_hz'), (new.get('ambient') or {}).get('frequency_hz')
     if fa and fb and not near(fa, fb):
         out.append(f'{cid}: strongest ambient peak {fa:g} -> {fb:g} Hz')
+    if not old.get('impulsive_at_events') and new.get('impulsive_at_events'):
+        out.append(f'{cid}: impulsive in the shaking (kicks: free play or glitches, not a linear mount)')
     if old.get('touring') is False and new.get('touring'):
         out.append(f'{cid}: now touring views')
     return out

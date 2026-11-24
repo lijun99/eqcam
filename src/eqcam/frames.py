@@ -339,6 +339,51 @@ def mount_response(shifts, fps, onset, max_step=32.0):
                 ringing_to_end=bool(not len(below)), resonant=resonant)
 
 
+KICK_FACTOR = 6.0               # a kick: a step between frames larger than this many times the typical step
+KICK_MIN_PX = 0.2               # and than this (px of the full frame)
+IMPULSIVE_KICKS_PER_S = 0.3     # impulsive: at least this many kicks per second,
+IMPULSIVE_SKEWNESS = 1.0        # with a one-sided motion (|skewness| at least this)
+IMPULSIVE_KURTOSIS = 8.0        # or heavy tails (kurtosis at least this; 3 for a Gaussian motion)
+
+
+def linearity(x, fps):
+    """Whether the image motion (n x 2, px of the full frame, high-passed; during the shaking, or ambient) looks
+    like the response of a linear mount: a pole or a bracket driven by the ground (or the wind) moves smoothly
+    and symmetrically (skewness about 0, kurtosis about 3 for a Gaussian, 1.5 for a sine), and its steps between
+    frames stay within a few times their typical size. Free play (a loose part knocking against a stop),
+    slip, or glitches of the video give kicks (a jump within one frame), a one-sided motion and heavy tails: the
+    motion is then not a filtered version of the ground motion, and no linear correction (a calibration of the
+    mount's frequency and damping) recovers the ground motion from it. Returns the skewness (of the axis with
+    the larger |skewness|), the larger kurtosis, the kicks (separate runs of large steps) and impulsive"""
+    x = np.asarray(x, float)
+    n = len(x)
+    if n < 2 * fps or not np.isfinite(x).all():
+        return None
+    xc = x - x.mean(0)
+    sd = xc.std(0) + 1e-12
+    skew = (xc ** 3).mean(0) / sd ** 3
+    kurt = (xc ** 4).mean(0) / sd ** 4
+    d = np.diff(x, axis=0)
+    typical = 1.4826 * np.median(np.abs(d - np.median(d, 0)), 0) + 1e-9
+    big = (np.abs(d) > np.maximum(KICK_FACTOR * typical, KICK_MIN_PX)).any(axis=1)
+    kicks = len(runs(ndimage.binary_closing(big, np.ones(3, bool)) | big))       # steps one frame apart: one kick
+    k = int(np.argmax(np.abs(skew)))
+    per_s = kicks / (n / fps)
+    impulsive = bool(per_s >= IMPULSIVE_KICKS_PER_S and (abs(skew[k]) >= IMPULSIVE_SKEWNESS
+                                                          or kurt.max() >= IMPULSIVE_KURTOSIS))
+    return dict(skewness=round(float(skew[k]), 2), kurtosis=round(float(kurt.max()), 1), kicks=kicks,
+                kicks_per_s=round(per_s, 2), impulsive=impulsive)
+
+
+def linearity_text(lin):
+    """The linearity of the image motion in words ('' if it looks linear)"""
+    if not lin or not lin.get('impulsive'):
+        return ''
+    return (f"The motion is impulsive, not a linear response of the mount: {lin['kicks']} kicks (jumps within a "
+            f"frame), skewness {lin['skewness']}, kurtosis {lin['kurtosis']}: free play (a loose part knocking), "
+            f"slip or video glitches; its spectrum and size do not follow the ground motion.")
+
+
 def same_view(frames, ref, segments, after, q_typical):
     """The last frame after frame after in the same view as frame ref: the end of the last stable view whose
     frames match it; (frame, shift) or (None, None)"""
@@ -491,8 +536,9 @@ def mount_text(mount):
     if mount['resonant']:
         return (f"The camera's mount resonates: dominant {near}, {ring}{damping}. The image motion shows the mount "
                 f"(pole, mast or building) more than the ground shaking; do not take its size as the intensity.")
-    return (f"The image motion is not a mount resonance: dominant {near}, {ring}{damping}; it is closer to the "
-            f"ground shaking, though its size still depends on the mount and the zoom.")
+    return (f"The image motion is not a mount resonance: dominant {near}, {ring}{damping}; it may be closer to "
+            f"the ground shaking (a stiff mount), or come from a loose part or the video (one-sided jumps); its "
+            f"size depends on the mount and the zoom.")
 
 
 def motion_text(m):

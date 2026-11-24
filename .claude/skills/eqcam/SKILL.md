@@ -115,15 +115,17 @@ for the rapid survey: it decodes the videos again, about 5 s per camera):
 eqcam report --out runs/<id> --vibration
 ```
 
-It writes `vibration.html` (the cameras colored by mount resonance; in each popup the figure), and
-`vibration_summary.png` (the dominant frequencies against the distance; the spectra of the cameras), and per
-camera `cameras/<id>/vibration.png` (the frame with the vibrating objects outlined; the camera's displacement
-against time, spectrum and spectrogram; the objects' displacement relative to the camera and spectra),
-`vibration.json` (the numbers) and `vibration.npz` (the series); `map.html` links them. Tell the user, per camera,
-the dominant frequency, whether the mount resonates, the roll, and the objects found (where, at which frequency);
-that displacements are in pixels (they depend on the zoom, the distance and the mount: compare frequencies and
-shapes, not amplitudes); and look at a few `vibration.png` before relying on the objects: a patch that a car,
-a person or a light change crosses can still pass the checks.
+It writes `vibration.html` (the cameras colored by mount resonance or impulsive motion; in each popup the
+figure), and `vibration_summary.png` (the dominant frequencies against the distance; the spectra of the cameras),
+and per camera `cameras/<id>/vibration.png` (the frame with the vibrating objects outlined; the camera's
+displacement against time, spectrum and spectrogram; the objects' displacement relative to the camera and
+spectra), `vibration.json` (the numbers) and `vibration.npz` (the series); `map.html` links them. Tell the user,
+per camera, the dominant frequency, whether the mount resonates or the motion is impulsive (`camera.linearity`:
+kicks within a frame, one-sided; free play or video glitches, not a linear mount: its timing and envelope are
+usable, its spectrum and size are not), the roll, and the objects found (where, at which frequency); that
+displacements are in pixels (they depend on the zoom, the distance and the mount: compare frequencies and shapes,
+not amplitudes); and look at a few `vibration.png` before relying on the objects: a patch that a car, a person or
+a light change crosses can still pass the checks.
 
 The same step picks the P and S arrivals in each camera's motion: `arrivals.html` (the cameras by the quality
 of their picks, "P and S", "S only" or "ambiguous"; per camera `arrivals.png` with the picks and the spectra of
@@ -198,8 +200,9 @@ eqcam calibrate --events runs/<event_id>/run --out calibration/catalog
 Per camera, the catalog gives: usable by day, twilight and night (and the problems: low resolution, dark,
 frozen, blurred), fixed or touring, usable for vibration (frame rate, a stable view, steady), the ambient peaks
 (grouped over the clips; a peak in many clips is the mount) and whether the mount frequency measured at events
-is among them, the uptime and the median stream delay. The quality bars (`QUALITY` in `calibrate.py`) are
-provisional: do not change them without the user. One short clip says little about the mount: look at
-`calibration/<id>.png` before relying on a frequency. Older clips can also be calibrated from files with
+is among them, whether the motion was impulsive in the shaking or in ambient clips (kicks: not a linear mount;
+the ambient spectrum then says nothing of its response to shaking), the uptime and the median stream delay. The
+quality bars (`QUALITY` in `calibrate.py`) are provisional: do not change them without the user. One short clip
+says little about the mount: look at `calibration/<id>.png` before relying on a frequency. Older clips can also be calibrated from files with
 `--clips clips.csv --videos <folder>` (the columns of `videos.csv`, and optionally `clip_id`, `start_s`,
 `end_s`, `wind_mps`).

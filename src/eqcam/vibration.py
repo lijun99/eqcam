@@ -4,8 +4,12 @@ eqcam report --vibration)
 For each camera with shaking, the shaking and its ring-down, in the view of the shaking, are decoded again at
 the frame rate of the video, 640 px wide. A grid of patches is tracked by phase correlation; per frame, an affine
 transform (shift, roll, scale and shear about the image center; the shear takes the rolling shutter of a camera
-vibrating fast) is fitted to the patches (least squares, then again without the patches that do not follow it):
-the motion of the camera. What is left in a patch is the motion of what it shows relative to the camera. A patch
+vibrating fast) is fitted to the patches, robustly (each patch weighted by the quality of its match in that
+frame and by Tukey's biweight of its residual: a dark patch of sensor noise, a blurred or blocky frame does not
+pull the fit), then again without the patches that do not follow it: the motion of the camera. Its linearity
+(eqcam.frames.linearity) tells a mount responding linearly to the ground from an impulsive motion (kicks within
+a frame, one-sided: free play, slip or video glitches), which no calibration of the mount turns back into the
+ground motion. What is left in a patch is the motion of what it shows relative to the camera. A patch
 that oscillates during the shaking well above its level before, at a frequency of its own (a spectral peak, not
 coherent with the camera's motion), tracked reliably (no jumps, no loss of the match: not traffic or people
 passing), is a vibrating object (a pole, a sign, a tree, wires, a structure); a patch whose residual mirrors the
@@ -25,6 +29,7 @@ import html
 import json
 import math
 import os
+import warnings
 
 import matplotlib
 import numpy as np
@@ -32,7 +37,7 @@ from PIL import Image
 from scipy import signal
 
 from .arrivals import arrivals as pick_arrivals
-from .frames import decode_small, image_shifts, video_fps
+from .frames import decode_small, image_shifts, linearity, linearity_text, video_fps
 from .report import BASEMAPS_JS, FIT_JS, PANEL_CSS, PANEL_JS, event_popup, title_of
 
 matplotlib.use('Agg')
@@ -42,7 +47,8 @@ from matplotlib.gridspec import GridSpec            # noqa: E402
 # the reference palette: categorical slots in a fixed order, ink, grid, surface
 SERIES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948']
 INK, INK2, GRID, MUTED = '#0b0b0b', '#52514e', '#e4e3df', '#8a8f98'
-CLASS_COLORS = {'resonant mount': SERIES[1], 'no mount resonance': SERIES[0], 'not analyzed': MUTED}
+CLASS_COLORS = {'resonant mount': SERIES[1], 'no mount resonance': SERIES[0],
+                'impulsive (not linear)': SERIES[3], 'not analyzed': MUTED}
 
 WIDTH = 640                 # px, the width of the frames tracked
 CELLS = (10, 6)             # the grid of patches, across and down
@@ -55,6 +61,9 @@ MAX_CAMERA_COHERENCE = 0.5  # not coherent with the camera's motion at its frequ
 MAX_BAD_FRAMES = 0.1        # tracked reliably in all but this fraction of the frames
 MAX_STEP_PX = 2.0           # (a step larger than this between frames, px of the tracked frames, is a jump)
 MAX_OBJECTS = 4             # objects plotted (all are in vibration.json)
+ROBUST_ITERATIONS = 5       # the fit of the camera's motion: iterations of the reweighting,
+TUKEY_C = 4.685             # the biweight's cutoff, in robust standard deviations of the residuals,
+MIN_RESIDUAL_PX = 0.05      # whose floor is this (px of the tracked frames)
 
 
 def window_of(m):
@@ -105,20 +114,44 @@ def coherence_at(x, y, fps, f):
     return best
 
 
-def fit_camera(local, centers, use):
+def fit_camera(local, centers, use, quality=None):
     """The motion of the camera per frame, an affine transform about the image center (shift across, shift down,
-    and the four gradients), fitted to the shifts of the patches used (local: n x P x 2, down and across); and
-    the shifts it predicts. Roll = (d down/dx - d across/dy) / 2, scale = (d across/dx + d down/dy) / 2"""
+    and the four gradients), fitted to the shifts of the patches used (local: n x P x 2, down and across); the
+    shifts it predicts (n x P x 2, down and across) and the weight of each patch in each frame (n x P, 0 where
+    it was rejected). Roll = (d down/dx - d across/dy) / 2, scale = (d across/dx + d down/dy) / 2.
+
+    Per frame and robustly: each patch is weighted by the quality of its match in that frame (quality: n x P,
+    0-1; all 1 if None) and by Tukey's biweight of its residual, starting from the median shift and iterated. A
+    patch that loses its match in some frames (a dark patch of sensor noise at night, the image blurred during
+    the shaking, compression blocks) does not pull the fit: an ordinary least-squares fit turns a few such
+    patches into a false shift, roll and scale of the whole image"""
     x, y = centers[:, 0], centers[:, 1]
-    P = len(x)
+    n, P = local.shape[0], len(x)
     A = np.zeros((2 * P, 6))
     A[:P, 0], A[:P, 2], A[:P, 3] = 1, x, y                   # across = p + c1 x + c2 y
     A[P:, 1], A[P:, 4], A[P:, 5] = 1, x, y                   # down = q + c3 x + c4 y
-    rows = np.concatenate([use, use])
-    b = np.concatenate([local[:, :, 1], local[:, :, 0]], axis=1)          # n x 2P
-    params = np.linalg.lstsq(A[rows], b[:, rows].T, rcond=None)[0].T        # n x 6
+    b = np.concatenate([local[:, :, 1], local[:, :, 0]], axis=1).astype(np.float64)    # n x 2P
+    prior = use[None, :] * (np.ones((n, P)) if quality is None else np.clip(quality, 0, 1))
+    params = np.zeros((n, 6))                                 # start: the median shift of the patches used
+    params[:, 0] = np.median(local[:, use, 1], axis=1)
+    params[:, 1] = np.median(local[:, use, 0], axis=1)
+    ridge = 1e-6 * np.diag([1, 1] + [float(np.mean(x ** 2 + y ** 2))] * 4)          # keeps a frame solvable
+    for _ in range(ROBUST_ITERATIONS):
+        r = b - params @ A.T
+        rr = np.hypot(r[:, :P], r[:, P:])
+        with warnings.catch_warnings():                       # a frame without any patch: no scale
+            warnings.simplefilter('ignore', RuntimeWarning)
+            med = np.nanmedian(np.where(prior > 0, rr, np.nan), axis=1)
+        s = np.maximum(1.4826 * np.nan_to_num(med, nan=0.0), MIN_RESIDUAL_PX)[:, None]
+        u = rr / (TUKEY_C * s)
+        w = prior * np.where(u < 1, (1 - u ** 2) ** 2, 0.0)
+        w2 = np.concatenate([w, w], axis=1)                                    # n x 2P
+        lhs = np.einsum('pi,np,pj->nij', A, w2, A) + ridge
+        rhs = np.einsum('pi,np,np->ni', A, w2, b)
+        ok = (w > 0).sum(axis=1) >= 4
+        params[ok] = np.linalg.solve(lhs[ok], rhs[ok][:, :, None])[:, :, 0]
     pred = params @ A.T
-    return params, np.stack([pred[:, P:], pred[:, :P]], axis=2)            # predicted (down, across)
+    return params, np.stack([pred[:, P:], pred[:, :P]], axis=2), w
 
 
 def analyze_camera(out, m, fps_max=30.0):
@@ -153,17 +186,25 @@ def analyze_camera(out, m, fps_max=30.0):
     if usable.sum() < 6:
         return None
 
-    # the camera: fitted to the usable patches, then again without those that do not follow it
-    params, pred = fit_camera(local, centers, usable)
+    # the camera: fitted to the usable patches (robustly, frame by frame, weighted by the quality of each match),
+    # then again without those that do not follow it
+    quality = height_q / np.maximum(np.median(height_q, axis=0), 1e-6)
+    params, pred, weights = fit_camera(local, centers, usable, quality)
     resid = local - pred
     rms = np.sqrt(np.mean(highpass(resid[onset:], fps) ** 2, axis=(0, 2)))
     follows = usable & (rms <= 3 * np.median(rms[usable]) + 1e-4)
     if follows.sum() >= 6:
-        params, pred = fit_camera(local, centers, follows)
+        params, pred, weights = fit_camera(local, centers, follows, quality)
         resid = local - pred
+        usable_fit = follows
+    else:
+        usable_fit = usable
+    inliers = (weights[onset:] > 0).sum(axis=1) / max(int(usable_fit.sum()), 1)
     cam = params[:, :2] * scale                               # px of the full frame, (across, down)
     cam_hp = highpass(cam - cam[:onset].mean(0), fps)
     fr, cam_psd, cam_f0, cam_conc = spectrum(cam_hp[onset:], fps)
+    stop = min(n, int(round((m['end_s'] - ta) * fps)) + 1)
+    lin = linearity(cam_hp[onset:stop], fps)                  # a linear mount, or kicks (free play, glitches)
 
     # the objects: oscillating on their own during the shaking; the overlays mirror the camera
     cam_motion = highpass(local - local[:onset].mean(0), fps)[onset:]       # the motion of each patch itself
@@ -207,7 +248,9 @@ def analyze_camera(out, m, fps_max=30.0):
                                peak_px=round(float(np.abs(cam_hp[onset:]).max()), 3),
                                rms_px=round(float(np.sqrt(np.mean(cam_hp[onset:] ** 2))), 3),
                                roll_rms_mrad=round(float(np.std(roll[onset:])) * 1000, 3),
-                               scale_rms_ppm=round(float(np.std(zoom[onset:])) * 1e6, 1)),
+                               scale_rms_ppm=round(float(np.std(zoom[onset:])) * 1e6, 1),
+                               patches_fitted=round(float(np.median(inliers)), 2),
+                               linearity=lin),
                    mount=m.get('mount'), patches_used=int(usable.sum()), overlays=overlays, set_aside=set_aside,
                    objects=[{k: v for k, v in o.items() if k != 'psd'} for o in objects])
     cdir = os.path.join(out, 'cameras', m['camera_id'])
@@ -290,7 +333,11 @@ def plot_camera(out, m, summary, t, cam_hp, fr, cam_psd, objects, obj_series, fp
     if cam['frequency_hz']:
         ax.axvline(cam['frequency_hz'], color=INK2, lw=0.8, ls=':')
         label = f"{cam['frequency_hz']:g} Hz, {100 * cam['concentration']:.0f} % of the power near it"
-        if mount.get('resonant'):
+        lin = cam.get('linearity') or {}
+        if lin.get('impulsive'):
+            label += (f"\nimpulsive, not a linear mount: {lin['kicks']} kicks,\n"
+                      f"skewness {lin['skewness']}, kurtosis {lin['kurtosis']}")
+        elif mount.get('resonant'):
             label += f"\nresonant mount, rings {mount.get('ring_s')} s"
         right = cam['frequency_hz'] < 0.5 * fr[band].max()          # the label on the side away from the peak
         ax.text(0.98 if right else 0.02, 0.97, label, transform=ax.transAxes, ha='right' if right else 'left',
@@ -345,6 +392,8 @@ def class_of(r):
     v = r.get('vibration')
     if not v:
         return 'not analyzed'
+    if (v['camera'].get('linearity') or {}).get('impulsive'):
+        return 'impulsive (not linear)'
     return 'resonant mount' if (v.get('mount') or {}).get('resonant') else 'no mount resonance'
 
 
@@ -365,7 +414,7 @@ def summary_png(rows, event, out):
         for o in v['objects']:
             if o['frequency_hz']:
                 a1.scatter(d, o['frequency_hz'], s=22, marker='D', color=SERIES[2], ec='white', lw=1, zorder=2)
-    for name in ('resonant mount', 'no mount resonance'):
+    for name in sorted({class_of(r) for r in done}, key=list(CLASS_COLORS).index):
         a1.scatter([], [], s=60, color=CLASS_COLORS[name], label=f'camera: {name}')
     if any(r['vibration']['objects'] for r in done):
         a1.scatter([], [], s=22, marker='D', color=SERIES[2], label='object in a view')
@@ -405,6 +454,9 @@ def popup(r):
         lines.append(('Resonant mount' if mount.get('resonant') else 'No mount resonance')
                      + (f", rings {mount['ring_s']} s" if mount.get('ring_s') is not None else '')
                      + (f", damping {100 * mount['damping']:.1f} %" if mount.get('damping') is not None else ''))
+    lin = cam.get('linearity')
+    if lin and lin.get('impulsive'):
+        lines.append(e(linearity_text(lin)))
     objs = v['objects']
     lines.append(f"{len(objs)} object{'s' if len(objs) != 1 else ''} vibrating on their own"
                  + (': ' + ', '.join(f"{o['id']}: {o['frequency_hz']} Hz" for o in objs[:6]) if objs else ''))

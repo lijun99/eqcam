@@ -210,29 +210,36 @@ backend. If `eqcam` is not installed in the environment, the skill runs it from 
   per camera `arrivals.png`, and the data in `vibration_data/` (and `vibration_data.zip`)
 
 **The image motion is not the ground motion.** It is the ground motion filtered by the camera's mount (a pole, a
-mast, a bracket, the building) and scaled by the zoom. `eqcam prepare` re-decodes the shaking and its ring-down
-at the frame rate of the video and measures the dominant frequency, the fraction of the motion near it, the
-ring-down (e-folding time of the envelope) and the damping. A narrow peak, lightly damped (5 % or less) and
-ringing 5 cycles or more, or any motion ringing 10 s or more, is flagged `resonant_mount`: the image motion shows
-the mount more than the ground (e.g., a Caltrans pole ringing at 5 Hz for 9 s or more after an M4.2 at 7 km). A
-broadband, quickly damped motion is closer to the ground shaking. The review estimates the intensity (MMI) only from
-visible effects, by a rubric of what a camera can show at each level: an estimate when it sees such effects, an
-upper bound when the scene could show them (people, hanging objects, trees, water) but shows none, or not
-constrained; with a confidence. The text calls the measured image motion "camera vibration" and keeps
-"shaking" for the ground shaking.
+mast, a bracket, the building) and scaled by the zoom. `eqcam prepare` re-decodes the shaking and its ring-down at
+the frame rate of the video and measures the dominant frequency, the fraction of the motion near it, the ring-down
+(e-folding time of the envelope) and the damping. A narrow peak, lightly damped (5 % or less) and ringing 5 cycles
+or more, or any motion ringing 10 s or more, is flagged `resonant_mount`: the image motion shows the mount more than
+the ground (e.g., a Caltrans pole ringing at 5 Hz for 9 s or more after an M4.2 at 7 km). A broadband, quickly
+damped motion may be closer to the ground shaking (a stiff mount), or come in one-sided kicks from a loose part or
+the video (see the linearity, with `--vibration`). The review estimates the intensity (MMI) only from visible
+effects, by a rubric of what a camera can show at each level: an estimate when it sees such effects, an upper bound
+when the scene could show them (people, hanging objects, trees, water) but shows none, or not constrained; with a
+confidence. The text calls the measured image motion "camera vibration" and keeps "shaking" for the ground shaking.
 
 **Vibration (optional, for scientific use).** `eqcam report --out runs/E --vibration` (or `eqcam run ...
 --vibration`) also analyzes the vibration of each camera with shaking and of the objects in its view: the shaking
 and its ring-down are decoded again at the frame rate of the video, 640 px wide; a grid of patches is tracked, an
-affine motion of the camera (shift, roll, scale, shear: the shear takes a rolling shutter) is fitted to them, and
-what is left in a patch is the motion of what it shows. A patch that oscillates on its own during the shaking (well
-above its level before, with a spectral peak, not coherent with the camera's motion, tracked without jumps: not
-traffic) is a vibrating object. It writes, per camera, `vibration.png` (the frame with the objects outlined; the
-displacement of the camera against time, its spectrum and spectrogram; the displacement and spectra of the
-objects), `vibration.json` and `vibration.npz` (the series), and `vibration.html` (a map of the cameras by their
-vibration, the figures in the popups) and `vibration_summary.png` (the dominant frequencies against the distance,
-the spectra of the cameras); `map.html` links them. Displacements are in pixels: compare frequencies and shapes
-across cameras, not amplitudes. It adds about 5 s per camera.
+affine motion of the camera (shift, roll, scale, shear: the shear takes a rolling shutter) is fitted to them frame
+by frame and robustly (each patch weighted by the quality of its match in that frame and by Tukey's biweight of its
+residual, so that dark patches of sensor noise at night or blurred, blocky frames do not make a false shift or
+roll), and what is left in a patch is the motion of what it shows. The camera's motion is also checked for
+linearity: a mount responding linearly to the ground moves smoothly and symmetrically, while free play (a loose part
+knocking), slip or video glitches give kicks (a jump within one frame), a one-sided motion and heavy tails. A camera
+with at least 0.3 kicks per second and |skewness| of 1 or more, or kurtosis of 8 or more, is `impulsive (not
+linear)` (`linearity` in `vibration.json`, its own color on the map): its motion gives the timing and the envelope
+of the shaking, but no calibration of the mount turns it back into the ground motion. A patch that oscillates on its
+own during the shaking (well above its level before, with a spectral peak, not coherent with the camera's motion,
+tracked without jumps: not traffic) is a vibrating object. It writes, per camera, `vibration.png` (the frame with
+the objects outlined; the displacement of the camera against time, its spectrum and spectrogram; the displacement
+and spectra of the objects), `vibration.json` and `vibration.npz` (the series), and `vibration.html` (a map of the
+cameras by their vibration, the figures in the popups) and `vibration_summary.png` (the dominant frequencies against
+the distance, the spectra of the cameras); `map.html` links them. Displacements are in pixels: compare frequencies
+and shapes across cameras, not amplitudes. It adds about 5 s per camera.
 
 **P and S arrivals and the data (with `--vibration`).** In each camera's motion (one-frame glitches removed,
 0.5-12 Hz), the onsets are the sharp rises of the motion energy; P and S are the pair of onsets whose interval
@@ -253,7 +260,10 @@ nearest seismic stations (0.13-4.6 km): the camera spectra are the mount's respo
 short, and the stream delays from the picks and from the envelopes cross-correlated with the stations differed by
 0.5-1.5 s. The envelope of the shaking agreed (peak correlation 0.75-0.94). Use the camera motion for whether and
 roughly when a camera shook, and for its mount frequencies; not for ground spectra, amplitudes or precise picks.
-The velocities above are the stations' apparent ones at that event.
+The velocities above are the stations' apparent ones at that event. At Mount Wilson (130 m from the station),
+driving models of the mount (stiff, resonant, soft; sampled at the frame rate, with aliasing) with the station's
+acceleration (5.8 cm/s²) gives at most 0.17 px of image motion, while the camera moved 2-4 px in one-sided kicks;
+no linear model fit the waveform (at most 11 % of its variance). That camera is flagged impulsive.
 
 **People are blurred** before the frames are published or shared: the review returns `people_boxes` (a box around
 every person or group, 0-1000 of the tile) with its findings, at no extra cost, and `eqcam report` pixelates and
@@ -304,17 +314,22 @@ the procedure (section 5), including what to report after each run. For each cli
 - **views**: fixed or touring presets, and the calm jitter of the image (as in prepare);
 - **ambient vibration**: the spectrum of the image motion in the stable views at the native frame rate (wind and
   traffic shake the mount); its peaks above the local background (running median over 2 Hz), and the half-power
-  width of the strongest (its damping, when wider than the resolution of 0.125 Hz).
+  width of the strongest (its damping, when wider than the resolution of 0.125 Hz); and its linearity, as in the
+  shaking (kicks in calm air are glitches of the video; in wind, they can be free play).
 
-`--events` adds what earlier events measured per camera: the mount's frequency and damping in the shaking, and
-the stream delay from the P and S arrivals (with `report --vibration`). Clips and events accumulate in the
-catalog folder (`clips/<camera_id>/<clip_id>.json`, `events/<event_id>.json`), and every run rebuilds
-`catalog.json`, `catalog.csv` (one row per camera: uptime, day, twilight and night usable and why not, touring,
-ambient peaks, mount at events, median stream delay, notes), per camera `calibration/<camera_id>.png` (the
-ambient spectra of its clips, by light, with the mount frequencies of the events) and `changes.json` (cameras
-new, offline or back online, no longer usable, a new ambient peak). Not yet: the scene inventory (which intensity
-levels a view can constrain, one model call per view), stream delays from burned-in clocks, and `prepare`
-reading the catalog.
+The ambient spectrum gives a linear mount's frequencies and damping, not its gain (the force of the wind is
+unknown): the gain needs a known input, such as events recorded by a nearby station. It says nothing of a mount
+with free play, whose kicks start only above some acceleration.
+
+`--events` adds what earlier events measured per camera: the mount's frequency and damping in the shaking, and, with
+`report --vibration`, whether the motion was impulsive and the stream delay from the P and S arrivals. Clips and
+events accumulate in the catalog folder (`clips/<camera_id>/<clip_id>.json`, `events/<event_id>.json`), and every
+run rebuilds `catalog.json`, `catalog.csv` (one row per camera: uptime, day, twilight and night usable and why not,
+touring, ambient peaks, clips with impulsive ambient motion, mount at events, impulsive at events, median stream
+delay, notes), per camera `calibration/<camera_id>.png` (the ambient spectra of its clips, by light, with the mount
+frequencies of the events) and `changes.json` (cameras new, offline or back online, no longer usable, a new ambient
+peak, impulsive in the shaking). Not yet: the scene inventory (which intensity levels a view can constrain, one
+model call per view), stream delays from burned-in clocks, and `prepare` reading the catalog.
 
 On the 2026-11-20 M3.9 videos (2 min after the shaking, at night), the ambient peaks match the mount at the event
 at Skid Row (2.5 Hz) and at the Caltrans pole (5 Hz, with modes at 1.1 and 2.5 Hz); not at Venice (0.5 min of
